@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inkwell | Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-page="dashboard">
+  <header id="site-header"></header>
+
+  <main class="container section">
+    <div class="dash-head">
+      <div>
+        <h1 id="welcome">Dashboard</h1>
+        <p class="muted">Manage everything you've written.</p>
+      </div>
+      <a href="create-blog.html" class="btn">+ New post</a>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><span id="statPosts">0</span><small>Your posts</small></div>
+      <div class="card stat"><span id="statAll">0</span><small>All posts on site</small></div>
+    </div>
+
+    <h2>Your posts</h2>
+    <div id="myPosts" class="list"></div>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
