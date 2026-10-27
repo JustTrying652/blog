@@ -1,41 +1,68 @@
-const KEYS = { users: "blog_users", session: "blog_session", posts: "blog_posts" };
+/* ---------- Config ---------- */
+const API = "http://localhost:5000/api";
+const SESSION_KEY = "blog_session";
 
-const read = (key, fallback) => {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
-  catch { return fallback; }
+/* ---------- Helpers ---------- */
+const getSession = () => {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)); }
+  catch { return null; }
 };
-const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const setSession = (data) => localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+const clearSession = () => localStorage.removeItem(SESSION_KEY);
 
-
+// Escape user content before putting it in HTML (prevents XSS)
 const esc = (str) =>
   String(str).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 
-async function hash(text) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+// One function for every API call
+async function api(path, { method = "GET", body, auth = false } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  const session = getSession();
+  if (auth && session) headers.Authorization = `Bearer ${session.token}`;
+
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Is the backend running?");
+  }
+
+  let data = {};
+  try { data = await res.json(); } catch { /* empty body */ }
+
+  if (!res.ok) {
+    // Token expired or invalid on a protected request: back to login
+    if (res.status === 401 && auth) {
+      clearSession();
+      window.location.href = "login.html";
+    }
+    throw new Error(data.error || "Something went wrong.");
+  }
+  return data;
 }
 
-const getSession = () => read(KEYS.session, null);
-const getPosts = () => read(KEYS.posts, []);
-
-/* -- Seed data -- */
-if (getPosts().length === 0) {
-  write(KEYS.posts, [
-    { id: 1, title: "web security", category: "Security",
-      content: "Always validate input, escape output, and never trust data that comes from the browser. These three habits prevent a huge share of common web vulnerabilities.",
-      author: "Inkwell", email: "team@inkwell.dev", date: "2026" },
-    { id: 2, title: "Why responsive design matters", category: "Tutorial",
-      content: "More than half of web traffic comes from phones. Designing mobile-first with flexible grids and media queries keeps your layout usable everywhere.",
-      author: "Inkwell", email: "team@inkwell.dev", date: "2026" },
-    { id: 3, title: "JavaScript", category: "Technology",
-      content: "Learn const and let, understand the DOM, and practise with small projects. Consistency beats cramming every time.",
-      author: "Inkwell", email: "team@inkwell.dev", date: "2026" },
-  ]);
+function showMsg(text, type = "error") {
+  const box = document.getElementById("formMsg");
+  box.textContent = text;
+  box.className = `msg ${type}`;
+  box.hidden = false;
 }
 
-/* -- Header / nav --*/
+function requireLogin() {
+  if (!getSession()) {
+    window.location.href = "login.html";
+    return false;
+  }
+  return true;
+}
+
+/* ---------- Header / nav ---------- */
 function renderHeader() {
   const header = document.getElementById("site-header");
   if (!header) return;
@@ -68,162 +95,161 @@ function renderHeader() {
   if (logout) {
     logout.addEventListener("click", (e) => {
       e.preventDefault();
-      localStorage.removeItem(KEYS.session);
+      clearSession();
       window.location.href = "login.html";
     });
   }
 }
 
-/* -- Small UI helpers -- */
-function showMsg(text, type = "error") {
-  const box = document.getElementById("formMsg");
-  box.textContent = text;
-  box.className = `msg ${type}`;
-  box.hidden = false;
-}
-
-function requireLogin() {
-  if (!getSession()) {
-    window.location.href = "login.html";
-    return false;
-  }
-  return true;
-}
-
-/* -- Page: Home -- */
-function initHome() {
+/* ---------- Page: Home ---------- */
+async function initHome() {
   const wrap = document.getElementById("posts");
-  const posts = [...getPosts()].sort((a, b) => b.id - a.id);
-  wrap.innerHTML = posts.map((p) => `
-    <article class="card post">
-      <span class="tag">${esc(p.category)}</span>
-      <h3>${esc(p.title)}</h3>
-      <p>${esc(p.content.length > 140 ? p.content.slice(0, 140) + "…" : p.content)}</p>
-      <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
-    </article>`).join("");
+  wrap.innerHTML = `<p class="muted">Loading posts…</p>`;
+
+  try {
+    const posts = await api("/posts");
+    if (posts.length === 0) {
+      wrap.innerHTML = `<p class="muted">No posts yet. Be the first to write one!</p>`;
+      return;
+    }
+    wrap.innerHTML = posts.map((p) => `
+      <article class="card post">
+        <span class="tag">${esc(p.category)}</span>
+        <h3>${esc(p.title)}</h3>
+        <p>${esc(p.content.length > 140 ? p.content.slice(0, 140) + "…" : p.content)}</p>
+        <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
+      </article>`).join("");
+  } catch (err) {
+    wrap.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+  }
 }
 
-/* -- Page: Register -- */
+/* ---------- Page: Register ---------- */
 function initRegister() {
   document.getElementById("registerForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = document.getElementById("name").value.trim();
-    const email = document.getElementById("email").value.trim().toLowerCase();
+    const email = document.getElementById("email").value.trim();
     const password = document.getElementById("password").value;
     const confirm = document.getElementById("confirm").value;
 
-    if (!name || !email || !password) return showMsg("Please fill in all fields.");
-    if (!/^\S+@\S+\.\S+$/.test(email)) return showMsg("Enter a valid email address.");
-    if (password.length < 8) return showMsg("Password must be at least 8 characters.");
     if (password !== confirm) return showMsg("Passwords do not match.");
 
-    const users = read(KEYS.users, []);
-    if (users.some((u) => u.email === email)) return showMsg("That email is already registered.");
-
-    users.push({ name, email, password: await hash(password) });
-    write(KEYS.users, users);
-
-    showMsg("Account created! Redirecting to login…", "success");
-    setTimeout(() => (window.location.href = "login.html"), 1000);
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      await api("/auth/register", { method: "POST", body: { name, email, password } });
+      showMsg("Account created! Redirecting to login…", "success");
+      setTimeout(() => (window.location.href = "login.html"), 1000);
+    } catch (err) {
+      showMsg(err.message);
+      btn.disabled = false;
+    }
   });
 }
 
-/* -- Page: Login -- */
+/* ---------- Page: Login ---------- */
 function initLogin() {
   if (getSession()) { window.location.href = "dashboard.html"; return; }
 
   document.getElementById("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = document.getElementById("email").value.trim().toLowerCase();
+    const email = document.getElementById("email").value.trim();
     const password = document.getElementById("password").value;
 
-    if (!email || !password) return showMsg("Enter your email and password.");
-
-    const users = read(KEYS.users, []);
-    const user = users.find((u) => u.email === email);
-    const ok = user && user.password === (await hash(password));
-
-    // Same message for both cases so attackers can't tell which part was wrong
-    if (!ok) return showMsg("Invalid email or password.");
-
-    write(KEYS.session, { name: user.name, email: user.email });
-    window.location.href = "dashboard.html";
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      const data = await api("/auth/login", { method: "POST", body: { email, password } });
+      setSession({ token: data.token, ...data.user });
+      window.location.href = "dashboard.html";
+    } catch (err) {
+      showMsg(err.message);
+      btn.disabled = false;
+    }
   });
 }
 
-/* -- Page: Dashboard -- */
-function initDashboard() {
+/* ---------- Page: Dashboard ---------- */
+async function initDashboard() {
   if (!requireLogin()) return;
   const user = getSession();
-
   document.getElementById("welcome").textContent = `Welcome, ${user.name}`;
 
-  function render() {
-    const all = getPosts();
-    const mine = all.filter((p) => p.email === user.email).sort((a, b) => b.id - a.id);
+  const list = document.getElementById("myPosts");
 
-    document.getElementById("statPosts").textContent = mine.length;
-    document.getElementById("statAll").textContent = all.length;
+  async function render() {
+    try {
+      const [mine, all] = await Promise.all([
+        api("/posts/mine", { auth: true }),
+        api("/posts"),
+      ]);
 
-    const list = document.getElementById("myPosts");
-    if (mine.length === 0) {
-      list.innerHTML = `<p class="muted">You haven't written anything yet. <a href="create-blog.html">Create your first post</a>.</p>`;
-      return;
+      document.getElementById("statPosts").textContent = mine.length;
+      document.getElementById("statAll").textContent = all.length;
+
+      if (mine.length === 0) {
+        list.innerHTML = `<p class="muted">You haven't written anything yet. <a href="create-blog.html">Create your first post</a>.</p>`;
+        return;
+      }
+      list.innerHTML = mine.map((p) => `
+        <div class="card row">
+          <div>
+            <h3>${esc(p.title)}</h3>
+            <span class="tag">${esc(p.category)}</span>
+            <span class="meta">&nbsp;${esc(p.date)}</span>
+          </div>
+          <button class="btn btn-danger btn-small" data-id="${esc(p.id)}">Delete</button>
+        </div>`).join("");
+    } catch (err) {
+      list.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
     }
-    list.innerHTML = mine.map((p) => `
-      <div class="card row">
-        <div>
-          <h3>${esc(p.title)}</h3>
-          <span class="tag">${esc(p.category)}</span>
-          <span class="meta">&nbsp;${esc(p.date)}</span>
-        </div>
-        <button class="btn btn-danger btn-small" data-id="${p.id}">Delete</button>
-      </div>`).join("");
   }
 
-  document.getElementById("myPosts").addEventListener("click", (e) => {
+  list.addEventListener("click", async (e) => {
     const id = e.target.dataset.id;
-    if (!id) return;
-    if (!confirm("Delete this post?")) return;
-    // Only allow deleting your own posts
-    write(KEYS.posts, getPosts().filter((p) => !(p.id === Number(id) && p.email === user.email)));
-    render();
+    if (!id || !confirm("Delete this post?")) return;
+    try {
+      await api(`/posts/${encodeURIComponent(id)}`, { method: "DELETE", auth: true });
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 
   render();
 }
 
-/* -- Page: Create Blog -- */
+/* ---------- Page: Create Blog ---------- */
 function initCreate() {
   if (!requireLogin()) return;
-  const user = getSession();
 
-  document.getElementById("blogForm").addEventListener("submit", (e) => {
+  document.getElementById("blogForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const title = document.getElementById("title").value.trim();
     const category = document.getElementById("category").value;
     const content = document.getElementById("content").value.trim();
 
-    if (!title || !category || !content) return showMsg("Please fill in all fields.");
-    if (content.length < 30) return showMsg("Content should be at least 30 characters.");
-
-    const posts = getPosts();
-    posts.push({
-      id: Date.now(), title, category, content,
-      author: user.name, email: user.email,
-      date: new Date().toISOString().slice(0, 10),
-    });
-    write(KEYS.posts, posts);
-
-    showMsg("Post published! Redirecting…", "success");
-    setTimeout(() => (window.location.href = "dashboard.html"), 800);
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      await api("/posts", { method: "POST", auth: true, body: { title, category, content } });
+      showMsg("Post published! Redirecting…", "success");
+      setTimeout(() => (window.location.href = "dashboard.html"), 800);
+    } catch (err) {
+      showMsg(err.message);
+      btn.disabled = false;
+    }
   });
 }
 
-/* -- Boot -- */
+/* ---------- Boot ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   renderHeader();
   const page = document.body.dataset.page;
-  const pages = { home: initHome, register: initRegister, login: initLogin, dashboard: initDashboard, create: initCreate };
+  const pages = {
+    home: initHome, register: initRegister, login: initLogin,
+    dashboard: initDashboard, create: initCreate,
+  };
   if (pages[page]) pages[page]();
 });
