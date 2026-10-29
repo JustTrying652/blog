@@ -1,0 +1,13 @@
+
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+
+# Allow example environment files
+!.env.example
+
+# Data files
+data.json
