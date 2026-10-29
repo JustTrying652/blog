@@ -101,7 +101,6 @@ function renderHeader() {
   }
 }
 
-/* ---------- Page: Home ---------- */
 async function initHome() {
   const wrap = document.getElementById("posts");
   wrap.innerHTML = `<p class="muted">Loading posts…</p>`;
@@ -112,13 +111,17 @@ async function initHome() {
       wrap.innerHTML = `<p class="muted">No posts yet. Be the first to write one!</p>`;
       return;
     }
-    wrap.innerHTML = posts.map((p) => `
+    wrap.innerHTML = posts.map((p) => {
+      const link = `post.html?id=${encodeURIComponent(p.id)}`;
+      return `
       <article class="card post">
         <span class="tag">${esc(p.category)}</span>
-        <h3>${esc(p.title)}</h3>
+        <h3><a href="${link}">${esc(p.title)}</a></h3>
         <p>${esc(p.content.length > 140 ? p.content.slice(0, 140) + "…" : p.content)}</p>
         <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
-      </article>`).join("");
+        <a class="read-more" href="${link}">Read more &rarr;</a>
+      </article>`;
+    }).join("");
   } catch (err) {
     wrap.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
   }
@@ -195,7 +198,7 @@ async function initDashboard() {
       list.innerHTML = mine.map((p) => `
         <div class="card row">
           <div>
-            <h3>${esc(p.title)}</h3>
+            <h3><a href="post.html?id=${encodeURIComponent(p.id)}">${esc(p.title)}</a></h3>
             <span class="tag">${esc(p.category)}</span>
             <span class="meta">&nbsp;${esc(p.date)}</span>
           </div>
@@ -243,13 +246,36 @@ function initCreate() {
   });
 }
 
+/* ---------- Page: Single post ---------- */
+async function initPost() {
+  const view = document.getElementById("postView");
+  const id = new URLSearchParams(window.location.search).get("id");
+
+  if (!id) {
+    view.innerHTML = `<p class="msg error">No post selected.</p>`;
+    return;
+  }
+
+  try {
+    const p = await api(`/posts/${encodeURIComponent(id)}`);
+    document.title = `Inkwell | ${p.title}`;
+    view.innerHTML = `
+      <span class="tag">${esc(p.category)}</span>
+      <h1>${esc(p.title)}</h1>
+      <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
+      <div class="article-body">${esc(p.content)}</div>`;
+  } catch (err) {
+    view.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+  }
+}
+
 /* ---------- Boot ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   renderHeader();
   const page = document.body.dataset.page;
   const pages = {
     home: initHome, register: initRegister, login: initLogin,
-    dashboard: initDashboard, create: initCreate,
+    dashboard: initDashboard, create: initCreate, post: initPost,
   };
   if (pages[page]) pages[page]();
 });
