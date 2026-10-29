@@ -1,8 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
-const { load, save } = require("../db");
+const supabase = require("../supabase");
 
 const router = express.Router();
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
@@ -35,19 +34,17 @@ router.post("/register", async (req, res, next) => {
       return res.status(400).json({ error: "Password must be at least 8 characters." });
     }
 
-    const db = load();
-    if (db.users.some((u) => u.email === email)) {
-      return res.status(409).json({ error: "That email is already registered." });
-    }
+    const password_hash = await bcrypt.hash(password, 10);
 
-    const user = {
-      id: crypto.randomUUID(),
-      name,
-      email,
-      passwordHash: await bcrypt.hash(password, 10),
-    };
-    db.users.push(user);
-    save(db);
+    const { error } = await supabase.from("users").insert({ name, email, password_hash });
+
+    if (error) {
+      // 23505 = unique violation, so the email already exists
+      if (error.code === "23505") {
+        return res.status(409).json({ error: "That email is already registered." });
+      }
+      throw error;
+    }
 
     res.status(201).json({ message: "Account created." });
   } catch (err) {
@@ -65,8 +62,15 @@ router.post("/login", async (req, res, next) => {
       return res.status(400).json({ error: "Enter your email and password." });
     }
 
-    const user = load().users.find((u) => u.email === email);
-    const ok = user && (await bcrypt.compare(password, user.passwordHash));
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id, name, email, password_hash")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const ok = user && (await bcrypt.compare(password, user.password_hash));
 
     // Same message whether the email or the password was wrong
     if (!ok) {
