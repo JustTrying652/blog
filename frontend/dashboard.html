@@ -28,13 +28,16 @@
 
       <div class="stats">
         <div class="stat"><span class="num" id="statPosts">0</span><small>Your articles</small></div>
+        <div class="stat"><span class="num" id="statThoughts">0</span><small>Your thoughts</small></div>
         <div class="stat"><span class="num" id="statWords">0</span><small>Words written</small></div>
-        <div class="stat"><span class="num" id="statAll">0</span><small>Articles on Inkwell</small></div>
+        <div class="stat"><span class="num" id="statAll">0</span><small>Posts on Inkwell</small></div>
       </div>
 
-      <div class="section-head">
-        <h2>Your articles</h2>
+      <div class="tabs" role="group" aria-label="Show">
+        <button type="button" class="tab is-active" data-tab="article" aria-pressed="true">Articles <span class="count" id="tabArticlesCount">0</span></button>
+        <button type="button" class="tab" data-tab="thought" aria-pressed="false">Thoughts <span class="count" id="tabThoughtsCount">0</span></button>
       </div>
+
       <div id="myPosts" class="list" aria-live="polite"></div>
     </div>
   </main>
