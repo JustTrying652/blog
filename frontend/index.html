@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Inkwell | Home</title>
+  <title>Inkwell | Every thought has a place</title>
+  <script>try{var d=document.documentElement,t=localStorage.getItem("inkwell_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");d.dataset.theme=t;if(localStorage.getItem("blog_session"))d.classList.add("authed")}catch(e){}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Serif+Display:ital@0;1&family=Lora:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body data-page="home">
@@ -12,21 +16,61 @@
   <main>
     <section class="hero">
       <div class="container">
-        <h1>Write. Share. Be read.</h1>
-        <p>A simple space for your ideas, stories and tutorials.</p>
-        <a href="register.html" class="btn">Start writing</a>
+        <p class="eyebrow">A home for writers and readers</p>
+        <h1>Every <em>thought</em> has a place.</h1>
+        <p class="hero-lead">Discover perspectives, explore ideas and share something worth reading.</p>
+        <div class="hero-actions">
+          <a href="#explore" class="btn btn-primary">Explore articles</a>
+          <a href="register.html" id="ctaWrite" class="btn btn-ghost">Start writing</a>
+        </div>
+        <p class="hero-meta" id="heroStats"></p>
       </div>
     </section>
 
-    <section class="container section">
-      <h2>Latest posts</h2>
-      <div id="posts" class="grid"></div>
-    </section>
+    <div class="container home-grid" id="explore">
+      <div class="home-main">
+        <section id="featuredSection" aria-labelledby="featuredTitle">
+          <div class="section-head">
+            <h2 id="featuredTitle">Featured</h2>
+          </div>
+          <div id="featured"></div>
+        </section>
+
+        <section id="latest" aria-labelledby="latestTitle">
+          <div class="section-head">
+            <h2 id="latestTitle">Latest articles</h2>
+            <label class="search">
+              <span class="search-icon" data-icon="search" data-size="18"></span>
+              <input type="search" id="postSearch" placeholder="Search articles, topics, writers" aria-label="Search articles" autocomplete="off" />
+            </label>
+          </div>
+          <div id="activeFilter" aria-live="polite"></div>
+          <div id="posts" class="post-list"></div>
+        </section>
+      </div>
+
+      <aside class="home-aside" aria-label="Discover">
+        <section class="aside-card join-card" id="joinCard">
+          <h3>Have something to say?</h3>
+          <p>Join Inkwell to publish your own articles and build a body of work.</p>
+          <a href="register.html" class="btn btn-primary btn-block">Create an account</a>
+          <p class="join-login">Already a member? <a href="login.html">Log in</a></p>
+        </section>
+
+        <section class="aside-card">
+          <h3>Trending topics</h3>
+          <div id="topics" class="topics"></div>
+        </section>
+
+        <section class="aside-card">
+          <h3>Writers to read</h3>
+          <div id="writers" class="writers"></div>
+        </section>
+      </aside>
+    </div>
   </main>
 
-  <footer class="footer">
-    <div class="container">&copy; 2026 Inkwell.</div>
-  </footer>
+  <footer id="site-footer" class="footer"></footer>
 
   <script src="js/app.js"></script>
 </body>
