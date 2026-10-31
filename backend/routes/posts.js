@@ -4,20 +4,24 @@ const supabase = require("../supabase");
 
 const router = express.Router();
 const CATEGORIES = ["Technology", "Security", "Tutorial", "Life"];
+const TYPES = ["article", "thought"];
+const THOUGHT_MAX = 280;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Join the author's name from users; password_hash is never selected here
-const COLUMNS = "id, title, category, content, created_at, author_id, author:users!author_id(name)";
+const COLUMNS = "id, type, title, category, content, created_at, author_id, author:users!author_id(name)";
 
 // Shape rows the way the frontend expects them
 const toPost = (p) => ({
   id: p.id,
+  type: p.type,
   title: p.title,
   category: p.category,
   content: p.content,
   author: p.author?.name ?? "Unknown",
   authorId: p.author_id,
   date: p.created_at.slice(0, 10),
+  createdAt: p.created_at,
 });
 
 // GET /api/posts  (public)
@@ -71,33 +75,53 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// POST /api/posts  (logged in)
+// POST /api/posts  (logged in): creates an article or a thought
 router.post("/", auth, async (req, res, next) => {
   try {
-    const title = String(req.body.title || "").trim();
-    const category = String(req.body.category || "");
-    const content = String(req.body.content || "").trim();
+    // Requests without a type are articles, so older clients keep working
+    const type = req.body.type === undefined ? "article" : String(req.body.type);
+    if (!TYPES.includes(type)) {
+      return res.status(400).json({ error: "Invalid post type." });
+    }
 
-    if (!title || !category || !content) {
-      return res.status(400).json({ error: "Please fill in all fields." });
-    }
-    if (title.length > 100) {
-      return res.status(400).json({ error: "Title must be 100 characters or fewer." });
-    }
-    if (!CATEGORIES.includes(category)) {
-      return res.status(400).json({ error: "Invalid category." });
-    }
-    if (content.length < 30) {
-      return res.status(400).json({ error: "Content should be at least 30 characters." });
-    }
-    if (content.length > 5000) {
-      return res.status(400).json({ error: "Content is too long (max 5000 characters)." });
+    const content = String(req.body.content || "").trim();
+    let row;
+
+    if (type === "thought") {
+      if (!content) {
+        return res.status(400).json({ error: "Write something first." });
+      }
+      if (content.length > THOUGHT_MAX) {
+        return res.status(400).json({ error: `A thought can be at most ${THOUGHT_MAX} characters.` });
+      }
+      // Thoughts never carry a title or category, whatever the client sends
+      row = { type, title: null, category: null, content };
+    } else {
+      const title = String(req.body.title || "").trim();
+      const category = String(req.body.category || "");
+
+      if (!title || !category || !content) {
+        return res.status(400).json({ error: "Please fill in all fields." });
+      }
+      if (title.length > 100) {
+        return res.status(400).json({ error: "Title must be 100 characters or fewer." });
+      }
+      if (!CATEGORIES.includes(category)) {
+        return res.status(400).json({ error: "Invalid category." });
+      }
+      if (content.length < 30) {
+        return res.status(400).json({ error: "Content should be at least 30 characters." });
+      }
+      if (content.length > 5000) {
+        return res.status(400).json({ error: "Content is too long (max 5000 characters)." });
+      }
+      row = { type, title, category, content };
     }
 
     // author_id comes from the verified token, never from the request body
     const { data, error } = await supabase
       .from("posts")
-      .insert({ title, category, content, author_id: req.user.id })
+      .insert({ ...row, author_id: req.user.id })
       .select(COLUMNS)
       .single();
     if (error) throw error;
