@@ -19,6 +19,7 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   arrowLeft: '<path d="M19 12H5M11 5l-7 7 7 7"/>',
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+  message: '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -63,6 +64,30 @@ function avatar(name, size = 32) {
 }
 
 const postHref = (p) => `post.html?id=${encodeURIComponent(p.id)}`;
+
+const isThought = (p) => p.type === "thought";
+const isArticle = (p) => !isThought(p);
+
+function timeAgo(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  return fmtDate(String(iso).slice(0, 10));
+}
+
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString("en-GB", {
+    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
 
 /* ---------- API ---------- */
 // One function for every API call
@@ -381,6 +406,20 @@ function miniCard(p) {
   </article>`;
 }
 
+function thoughtCard(p) {
+  return `<article class="thought">
+    <div class="thought-head">
+      ${avatar(p.author, 40)}
+      <div class="thought-who">
+        <strong>${esc(p.author)}</strong>
+        <time datetime="${esc(p.createdAt)}" title="${esc(fmtDateTime(p.createdAt))}">${esc(timeAgo(p.createdAt))}</time>
+      </div>
+    </div>
+    <p class="thought-text">${esc(p.content)}</p>
+    <a class="card-link" href="${postHref(p)}" aria-label="Open thought by ${esc(p.author)}"></a>
+  </article>`;
+}
+
 /* ---------- Page: Home ---------- */
 async function initHome() {
   const user = getSession();
@@ -391,6 +430,8 @@ async function initHome() {
 
   const featuredSection = document.getElementById("featuredSection");
   const featuredEl = document.getElementById("featured");
+  const thoughtsSection = document.getElementById("thoughtsSection");
+  const thoughtsEl = document.getElementById("thoughts");
   const listEl = document.getElementById("posts");
   const filterEl = document.getElementById("activeFilter");
   const topicsEl = document.getElementById("topics");
@@ -403,26 +444,32 @@ async function initHome() {
     document.getElementById("latest").scrollIntoView({ behavior: "smooth", block: "start" });
 
   function render() {
-    const { posts, category } = state;
+    const { category } = state;
     const q = state.query.trim().toLowerCase();
     const filtering = Boolean(q || category);
+    const articles = state.posts.filter(isArticle);
+    const thoughts = state.posts.filter(isThought);
 
     // Writers, ranked by number of articles
     const writerMap = new Map();
-    posts.forEach((p) => {
+    articles.forEach((p) => {
       const w = writerMap.get(p.authorId) || { name: p.author, count: 0 };
       w.count += 1;
       writerMap.set(p.authorId, w);
     });
 
-    statsEl.textContent = posts.length
-      ? `${posts.length} ${posts.length === 1 ? "article" : "articles"} from ${writerMap.size} ${writerMap.size === 1 ? "writer" : "writers"}`
+    const authorCount = new Set(state.posts.map((p) => p.authorId)).size;
+    const parts = [];
+    if (articles.length) parts.push(`${articles.length} ${articles.length === 1 ? "article" : "articles"}`);
+    if (thoughts.length) parts.push(`${thoughts.length} ${thoughts.length === 1 ? "thought" : "thoughts"}`);
+    statsEl.textContent = parts.length
+      ? `${parts.join(" and ")} from ${authorCount} ${authorCount === 1 ? "writer" : "writers"}`
       : "";
 
     // Featured: the three newest articles (hidden while searching or filtering)
     const featuredIds = new Set();
-    if (!filtering && posts.length) {
-      const leadPosts = posts.slice(0, 3);
+    if (!filtering && articles.length) {
+      const leadPosts = articles.slice(0, 3);
       leadPosts.forEach((p) => featuredIds.add(p.id));
       featuredEl.innerHTML =
         leadCard(leadPosts[0]) +
@@ -432,8 +479,16 @@ async function initHome() {
       featuredSection.hidden = true;
     }
 
-    // Latest list
-    let items = posts.filter((p) => !featuredIds.has(p.id));
+    // Community thoughts: the four newest (hidden while searching or filtering)
+    if (!filtering && thoughts.length) {
+      thoughtsEl.innerHTML = thoughts.slice(0, 4).map(thoughtCard).join("");
+      thoughtsSection.hidden = false;
+    } else {
+      thoughtsSection.hidden = true;
+    }
+
+    // Latest articles
+    let items = articles.filter((p) => !featuredIds.has(p.id));
     if (category) items = items.filter((p) => p.category === category);
     if (q) {
       items = items.filter((p) =>
@@ -448,7 +503,7 @@ async function initHome() {
       listEl.innerHTML = items.map(postItem).join("");
     } else if (filtering) {
       listEl.innerHTML = stateHTML({ icon: "search", title: "No articles found", text: "Try a different search or topic." });
-    } else if (!posts.length) {
+    } else if (!articles.length) {
       listEl.innerHTML = stateHTML({
         icon: "pen", title: "No articles yet", text: "Be the first to publish something.",
         action: `<a class="btn btn-primary" href="${user ? "create-blog.html" : "register.html"}">Start writing</a>`,
@@ -457,9 +512,9 @@ async function initHome() {
       listEl.innerHTML = `<p class="muted caught-up">You're all caught up. New articles will appear here.</p>`;
     }
 
-    // Trending topics: categories ranked by article count
+    // Trending topics: article categories ranked by count
     const counts = new Map();
-    posts.forEach((p) => counts.set(p.category, (counts.get(p.category) || 0) + 1));
+    articles.forEach((p) => counts.set(p.category, (counts.get(p.category) || 0) + 1));
     const topics = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     topicsEl.innerHTML = topics.length
       ? topics.map(([c, n]) => `<button type="button" class="topic${c === category ? " is-active" : ""}" data-topic="${esc(c)}" aria-pressed="${c === category}"><span>${esc(c)}</span><span class="count">${n}</span></button>`).join("")
@@ -481,6 +536,7 @@ async function initHome() {
       render();
     } catch (err) {
       featuredSection.hidden = true;
+      thoughtsSection.hidden = true;
       listEl.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load articles", text: err.message, action: retryBtn });
       listEl.querySelector("[data-retry]").addEventListener("click", load);
     }
@@ -583,8 +639,19 @@ async function initDashboard() {
   document.getElementById("welcome").textContent = `Welcome back, ${first}.`;
 
   const list = document.getElementById("myPosts");
+  const tabs = document.querySelectorAll(".tab");
+  const state = {
+    mine: [],
+    tab: new URLSearchParams(window.location.search).get("tab") === "thoughts" ? "thought" : "article",
+  };
 
-  const rowCard = (p) => `
+  const actions = (p, label) => `
+    <div class="row-actions">
+      <a class="btn btn-ghost btn-sm" href="${postHref(p)}">View</a>
+      <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" data-id="${esc(p.id)}" data-kind="${esc(p.type)}" data-title="${esc(label)}">Delete</button>
+    </div>`;
+
+  const articleRow = (p) => `
     <article class="row-card">
       <div class="row-main">
         <h3><a href="${postHref(p)}">${esc(p.title)}</a></h3>
@@ -594,46 +661,88 @@ async function initDashboard() {
           <span>${readingTime(p.content)} min read</span>
         </div>
       </div>
-      <div class="row-actions">
-        <a class="btn btn-ghost btn-sm" href="${postHref(p)}">View</a>
-        <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" data-id="${esc(p.id)}" data-title="${esc(p.title)}">Delete</button>
-      </div>
+      ${actions(p, p.title)}
     </article>`;
 
-  async function render() {
+  const thoughtRow = (p) => `
+    <article class="row-card">
+      <div class="row-main">
+        <h3 class="row-thought"><a href="${postHref(p)}">${esc(excerpt(p.content, 140))}</a></h3>
+        <div class="row-meta">
+          <span class="tag tag-thought">Thought</span>
+          <time datetime="${esc(p.createdAt)}">${esc(timeAgo(p.createdAt))}</time>
+          <span>${p.content.length} / 280</span>
+        </div>
+      </div>
+      ${actions(p, excerpt(p.content, 60))}
+    </article>`;
+
+  function renderList() {
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === state.tab;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-pressed", String(on));
+    });
+
+    const wantThoughts = state.tab === "thought";
+    const items = state.mine.filter((p) => isThought(p) === wantThoughts);
+
+    if (items.length) {
+      list.innerHTML = items.map(wantThoughts ? thoughtRow : articleRow).join("");
+    } else if (wantThoughts) {
+      list.innerHTML = stateHTML({
+        icon: "message",
+        title: "No thoughts yet",
+        text: "Share a quick idea, opinion or observation.",
+        action: `<a class="btn btn-primary" href="create-blog.html?type=thought">Share a thought</a>`,
+      });
+    } else {
+      list.innerHTML = stateHTML({
+        icon: "pen",
+        title: "Nothing published yet",
+        text: "Your first article is one idea away.",
+        action: `<a class="btn btn-primary" href="create-blog.html">Write your first article</a>`,
+      });
+    }
+  }
+
+  async function load() {
     list.innerHTML = skeletonRows(3);
     try {
       const [mine, all] = await Promise.all([
         api("/posts/mine", { auth: true }),
         api("/posts"),
       ]);
+      state.mine = mine;
 
-      document.getElementById("statPosts").textContent = mine.length;
+      const articles = mine.filter(isArticle);
+      const thoughts = mine.filter(isThought);
+      document.getElementById("statPosts").textContent = articles.length;
+      document.getElementById("statThoughts").textContent = thoughts.length;
       document.getElementById("statWords").textContent =
         mine.reduce((n, p) => n + wordCount(p.content), 0).toLocaleString("en-GB");
       document.getElementById("statAll").textContent = all.length;
+      document.getElementById("tabArticlesCount").textContent = articles.length;
+      document.getElementById("tabThoughtsCount").textContent = thoughts.length;
 
-      if (mine.length === 0) {
-        list.innerHTML = stateHTML({
-          icon: "pen",
-          title: "Nothing published yet",
-          text: "Your first article is one idea away.",
-          action: `<a class="btn btn-primary" href="create-blog.html">Write your first article</a>`,
-        });
-        return;
-      }
-      list.innerHTML = mine.map(rowCard).join("");
+      renderList();
     } catch (err) {
-      list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your articles", text: err.message, action: retryBtn });
-      list.querySelector("[data-retry]").addEventListener("click", render);
+      list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your posts", text: err.message, action: retryBtn });
+      list.querySelector("[data-retry]").addEventListener("click", load);
     }
   }
+
+  tabs.forEach((t) => t.addEventListener("click", () => {
+    state.tab = t.dataset.tab;
+    renderList();
+  }));
 
   list.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-id]");
     if (!btn) return;
+    const thought = btn.dataset.kind === "thought";
     const ok = await confirmDialog({
-      title: "Delete this article?",
+      title: thought ? "Delete this thought?" : "Delete this article?",
       text: `“${btn.dataset.title}” will be permanently removed. This can't be undone.`,
       confirmLabel: "Delete",
       danger: true,
@@ -641,14 +750,14 @@ async function initDashboard() {
     if (!ok) return;
     try {
       await api(`/posts/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE", auth: true });
-      toast("Article deleted.");
-      render();
+      toast(thought ? "Thought deleted." : "Article deleted.");
+      load();
     } catch (err) {
       toast(err.message, "error");
     }
   });
 
-  render();
+  load();
 }
 
 /* ---------- Page: Create Blog ---------- */
@@ -662,26 +771,67 @@ function initCreate() {
   const contentEl = document.getElementById("content");
   const wordsEl = document.getElementById("wordCount");
   const charsEl = document.getElementById("charCount");
+  const thoughtEl = document.getElementById("thoughtContent");
+  const thoughtCountEl = document.getElementById("thoughtCount");
+  const articleFields = document.getElementById("articleFields");
+  const thoughtFields = document.getElementById("thoughtFields");
+  const kindEl = document.getElementById("studioKind");
   const editor = document.getElementById("editorPane");
   const preview = document.getElementById("previewPane");
   const previewBtn = document.getElementById("previewBtn");
+  let type = "article";
   let dirty = false;
   let leaving = false;
+
+  document.getElementById("composerAvatar").innerHTML = avatar(user.name, 44);
 
   const updateCounts = () => {
     const w = wordCount(contentEl.value);
     wordsEl.textContent = `${w} ${w === 1 ? "word" : "words"}`;
     charsEl.textContent = `${contentEl.value.length} / 5000`;
   };
+  const updateThoughtCount = () => {
+    const n = thoughtEl.value.length;
+    thoughtCountEl.textContent = `${n} / 280`;
+    thoughtCountEl.classList.toggle("warn", n >= 260);
+  };
   contentEl.addEventListener("input", updateCounts);
-  [titleEl, catEl, contentEl].forEach((el) => el.addEventListener("input", () => { dirty = true; }));
+  thoughtEl.addEventListener("input", updateThoughtCount);
+  [titleEl, catEl, contentEl, thoughtEl].forEach((el) => el.addEventListener("input", () => { dirty = true; }));
 
   // Warn before losing an unpublished draft
   window.addEventListener("beforeunload", (e) => {
     if (dirty && !leaving) { e.preventDefault(); e.returnValue = ""; }
   });
 
-  // Preview: shows how the article will look, built from what's typed (no backend needed)
+  function setType(next, focus) {
+    type = next;
+    document.querySelectorAll(".type-card").forEach((card) => {
+      card.classList.toggle("is-selected", card.querySelector("input").value === next);
+    });
+    articleFields.hidden = next !== "article";
+    thoughtFields.hidden = next !== "thought";
+    kindEl.textContent = next === "article" ? "New article" : "New thought";
+
+    // Leave preview mode when switching
+    preview.hidden = true;
+    editor.hidden = false;
+    previewBtn.textContent = "Preview";
+
+    if (focus) (next === "thought" ? thoughtEl : titleEl).focus();
+  }
+
+  document.querySelectorAll('input[name="type"]').forEach((radio) => {
+    radio.addEventListener("change", () => setType(radio.value, true));
+  });
+
+  // Dashboard links here with ?type=thought to open the thought composer directly
+  if (new URLSearchParams(window.location.search).get("type") === "thought") {
+    document.querySelector('input[name="type"][value="thought"]').checked = true;
+    setType("thought", false);
+  }
+
+  // Preview: shows how the post will look, built from what's typed (no backend needed)
   previewBtn.addEventListener("click", () => {
     if (!preview.hidden) {
       preview.hidden = true;
@@ -689,17 +839,30 @@ function initCreate() {
       previewBtn.textContent = "Preview";
       return;
     }
-    const title = titleEl.value.trim() || "Untitled";
-    const category = catEl.value || "Uncategorised";
-    const content = contentEl.value.trim();
-    preview.innerHTML = `
-      <span class="tag">${esc(category)}</span>
-      <h1 class="article-title">${esc(title)}</h1>
-      <div class="article-meta">
-        ${avatar(user.name, 40)}
-        <div class="article-by"><strong>${esc(user.name)}</strong><span>Preview · ${readingTime(content)} min read</span></div>
-      </div>
-      <div class="article-body">${esc(content || "Start writing to see your article here.")}</div>`;
+
+    if (type === "thought") {
+      const text = thoughtEl.value.trim();
+      preview.innerHTML = `
+        <div class="thought-view">
+          <div class="thought-head">
+            ${avatar(user.name, 52)}
+            <div class="thought-who"><strong>${esc(user.name)}</strong><span>Preview</span></div>
+          </div>
+          <p class="thought-view-text">${esc(text || "Write something to see it here.")}</p>
+        </div>`;
+    } else {
+      const title = titleEl.value.trim() || "Untitled";
+      const category = catEl.value || "Uncategorised";
+      const content = contentEl.value.trim();
+      preview.innerHTML = `
+        <span class="tag">${esc(category)}</span>
+        <h1 class="article-title">${esc(title)}</h1>
+        <div class="article-meta">
+          ${avatar(user.name, 40)}
+          <div class="article-by"><strong>${esc(user.name)}</strong><span>Preview · ${readingTime(content)} min read</span></div>
+        </div>
+        <div class="article-body">${esc(content || "Start writing to see your article here.")}</div>`;
+    }
     preview.hidden = false;
     editor.hidden = true;
     previewBtn.textContent = "Back to editing";
@@ -707,17 +870,18 @@ function initCreate() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const title = titleEl.value.trim();
-    const category = catEl.value;
-    const content = contentEl.value.trim();
+
+    const body = type === "thought"
+      ? { type, content: thoughtEl.value.trim() }
+      : { type, title: titleEl.value.trim(), category: catEl.value, content: contentEl.value.trim() };
 
     const btn = form.querySelector("button[type=submit]");
     setBusy(btn, true);
     try {
-      await api("/posts", { method: "POST", auth: true, body: { title, category, content } });
+      await api("/posts", { method: "POST", auth: true, body });
       leaving = true;
-      flash("Article published.");
-      window.location.href = "dashboard.html";
+      flash(type === "thought" ? "Thought shared." : "Article published.");
+      window.location.href = type === "thought" ? "dashboard.html?tab=thoughts" : "dashboard.html";
     } catch (err) {
       showMsg(err.message);
       setBusy(btn, false);
@@ -725,23 +889,36 @@ function initCreate() {
   });
 
   updateCounts();
+  updateThoughtCount();
 }
 
 /* ---------- Page: Single post ---------- */
 async function loadRelated(current) {
   const box = document.getElementById("related");
   const listEl = document.getElementById("relatedList");
+  const titleEl = document.getElementById("relatedTitle");
   try {
-    const all = await api("/posts");
-    const others = all.filter((p) => p.id !== current.id);
-    const picks = [
-      ...others.filter((p) => p.category === current.category),
-      ...others.filter((p) => p.category !== current.category),
-    ].slice(0, 3);
-    if (!picks.length) return;
-    listEl.innerHTML = picks.map(miniCard).join("");
+    const others = (await api("/posts")).filter((p) => p.id !== current.id);
+
+    if (isThought(current)) {
+      const picks = others.filter(isThought).slice(0, 3);
+      if (!picks.length) return;
+      titleEl.textContent = "More thoughts";
+      listEl.className = "thoughts-grid";
+      listEl.innerHTML = picks.map(thoughtCard).join("");
+    } else {
+      const articles = others.filter(isArticle);
+      const picks = [
+        ...articles.filter((p) => p.category === current.category),
+        ...articles.filter((p) => p.category !== current.category),
+      ].slice(0, 3);
+      if (!picks.length) return;
+      titleEl.textContent = "Keep reading";
+      listEl.className = "featured-more";
+      listEl.innerHTML = picks.map(miniCard).join("");
+    }
     box.hidden = false;
-  } catch { /* related articles are optional */ }
+  } catch { /* related content is optional */ }
 }
 
 async function initPost() {
@@ -750,8 +927,8 @@ async function initPost() {
 
   if (!id) {
     view.innerHTML = stateHTML({
-      icon: "alert", title: "No article selected",
-      action: `<a class="btn btn-primary" href="index.html">Browse articles</a>`,
+      icon: "alert", title: "Nothing selected",
+      action: `<a class="btn btn-primary" href="index.html">Back to home</a>`,
     });
     return;
   }
@@ -766,22 +943,43 @@ async function initPost() {
       <div class="skeleton" style="width:70%;margin:.6rem 0"></div>
     </div>`;
 
+  const articleHTML = (p) => `
+    <span class="tag">${esc(p.category)}</span>
+    <h1 class="article-title">${esc(p.title)}</h1>
+    <div class="article-meta">
+      ${avatar(p.author, 44)}
+      <div class="article-by">
+        <strong>${esc(p.author)}</strong>
+        <span><time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time> · ${readingTime(p.content)} min read</span>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
+    </div>
+    <div class="article-body">${esc(p.content)}</div>`;
+
+  const thoughtHTML = (p) => `
+    <div class="thought-view">
+      <div class="thought-head">
+        ${avatar(p.author, 52)}
+        <div class="thought-who"><strong>${esc(p.author)}</strong><span>Thought</span></div>
+      </div>
+      <p class="thought-view-text">${esc(p.content)}</p>
+      <div class="thought-view-foot">
+        <time datetime="${esc(p.createdAt)}">${esc(fmtDateTime(p.createdAt))}</time>
+        <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
+      </div>
+    </div>`;
+
   async function load() {
     try {
       const p = await api(`/posts/${encodeURIComponent(id)}`);
-      document.title = `${p.title} · Inkwell`;
-      view.innerHTML = `
-        <span class="tag">${esc(p.category)}</span>
-        <h1 class="article-title">${esc(p.title)}</h1>
-        <div class="article-meta">
-          ${avatar(p.author, 44)}
-          <div class="article-by">
-            <strong>${esc(p.author)}</strong>
-            <span><time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time> · ${readingTime(p.content)} min read</span>
-          </div>
-          <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
-        </div>
-        <div class="article-body">${esc(p.content)}</div>`;
+
+      if (isThought(p)) {
+        document.title = `${p.author}: ${excerpt(p.content, 50)} · Inkwell`;
+        view.innerHTML = thoughtHTML(p);
+      } else {
+        document.title = `${p.title} · Inkwell`;
+        view.innerHTML = articleHTML(p);
+      }
 
       document.getElementById("copyLink").addEventListener("click", () => {
         navigator.clipboard.writeText(window.location.href)
@@ -792,8 +990,8 @@ async function initPost() {
       loadRelated(p);
     } catch (err) {
       view.innerHTML = stateHTML({
-        icon: "alert", title: "Couldn't open this article", text: err.message,
-        action: `<a class="btn btn-primary" href="index.html">Back to all articles</a>`,
+        icon: "alert", title: "Couldn't open this post", text: err.message,
+        action: `<a class="btn btn-primary" href="index.html">Back to home</a>`,
       });
     }
   }
