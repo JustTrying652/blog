@@ -17,33 +17,68 @@
     <div class="studio">
       <div class="studio-top">
         <a class="back-link" href="dashboard.html"><span data-icon="arrowLeft" data-size="18"></span> Dashboard</a>
-        <p class="eyebrow">New article</p>
+        <p class="eyebrow" id="studioKind">New article</p>
       </div>
 
       <form id="blogForm" novalidate>
-        <div id="editorPane">
-          <label class="sr-only" for="title">Title</label>
-          <input type="text" id="title" class="title-input" placeholder="Title" maxlength="100" autocomplete="off" required />
+        <fieldset class="type-picker">
+          <legend class="sr-only">What would you like to share?</legend>
 
-          <div class="studio-meta">
-            <div class="select-wrap">
-              <label class="sr-only" for="category">Category</label>
-              <select id="category" required>
-                <option value="">Choose a category</option>
-                <option>Technology</option>
-                <option>Security</option>
-                <option>Tutorial</option>
-                <option>Life</option>
-              </select>
+          <label class="type-card is-selected">
+            <input type="radio" name="type" value="article" checked />
+            <span class="type-card-body">
+              <span class="type-icon" data-icon="pen" data-size="22"></span>
+              <strong>Article</strong>
+              <small>Long-form writing with a title, a topic and room to think.</small>
+            </span>
+          </label>
+
+          <label class="type-card">
+            <input type="radio" name="type" value="thought" />
+            <span class="type-card-body">
+              <span class="type-icon" data-icon="message" data-size="22"></span>
+              <strong>Thought</strong>
+              <small>A quick idea or opinion in 280 characters or fewer.</small>
+            </span>
+          </label>
+        </fieldset>
+
+        <div id="editorPane">
+          <div id="articleFields">
+            <label class="sr-only" for="title">Title</label>
+            <input type="text" id="title" class="title-input" placeholder="Title" maxlength="100" autocomplete="off" required />
+
+            <div class="studio-meta">
+              <div class="select-wrap">
+                <label class="sr-only" for="category">Category</label>
+                <select id="category" required>
+                  <option value="">Choose a category</option>
+                  <option>Technology</option>
+                  <option>Security</option>
+                  <option>Tutorial</option>
+                  <option>Life</option>
+                </select>
+              </div>
+              <div class="counters">
+                <span id="wordCount">0 words</span>
+                <span id="charCount">0 / 5000</span>
+              </div>
             </div>
-            <div class="counters">
-              <span id="wordCount">0 words</span>
-              <span id="charCount">0 / 5000</span>
-            </div>
+
+            <label class="sr-only" for="content">Article body</label>
+            <textarea id="content" class="body-input" placeholder="Tell your story…" maxlength="5000" required></textarea>
           </div>
 
-          <label class="sr-only" for="content">Article body</label>
-          <textarea id="content" class="body-input" placeholder="Tell your story…" maxlength="5000" required></textarea>
+          <div id="thoughtFields" class="composer" hidden>
+            <span id="composerAvatar"></span>
+            <div class="composer-main">
+              <label class="sr-only" for="thoughtContent">Your thought</label>
+              <textarea id="thoughtContent" class="thought-input" placeholder="What's on your mind?" maxlength="280" rows="5"></textarea>
+              <div class="composer-foot">
+                <span class="counters"><span id="thoughtCount">0 / 280</span></span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <article id="previewPane" class="article article-preview" hidden></article>
