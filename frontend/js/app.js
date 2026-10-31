@@ -1,8 +1,30 @@
 /* ---------- Config ---------- */
 const API = "http://localhost:5000/api";
 const SESSION_KEY = "blog_session";
+const THEME_KEY = "inkwell_theme";
+const FLASH_KEY = "inkwell_flash";
 
-/* ---------- Helpers ---------- */
+/* ---------- Icons (inline SVG, no library) ---------- */
+const ICONS = {
+  logo: '<path d="M12 2.5c3.2 4 6 7.1 6 10.6a6 6 0 01-12 0C6 9.6 8.8 6.5 12 2.5z"/><path d="M12 9.5v7"/>',
+  home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
+  pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+  logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>',
+  eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M17.9 17.9A10.9 10.9 0 0112 20C5 20 1 12 1 12a18.5 18.5 0 015.1-5.9M9.9 4.2A9.1 9.1 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.2 3.2"/><path d="M1 1l22 22"/>',
+  link: '<path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  arrowLeft: '<path d="M19 12H5M11 5l-7 7 7 7"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+};
+
+const icon = (name, size = 20) =>
+  `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
+
+/* ---------- Session helpers ---------- */
 const getSession = () => {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY)); }
   catch { return null; }
@@ -10,12 +32,39 @@ const getSession = () => {
 const setSession = (data) => localStorage.setItem(SESSION_KEY, JSON.stringify(data));
 const clearSession = () => localStorage.removeItem(SESSION_KEY);
 
+/* ---------- Formatting helpers ---------- */
 // Escape user content before putting it in HTML (prevents XSS)
 const esc = (str) =>
   String(str).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 
+const wordCount = (text) => (String(text).trim().match(/\S+/g) || []).length;
+const readingTime = (text) => Math.max(1, Math.ceil(wordCount(text) / 200));
+
+const fmtDate = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return isNaN(d) ? String(iso) : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+
+function excerpt(text, max = 160) {
+  const flat = String(text).replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  return flat.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
+const initials = (name) =>
+  String(name).trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+
+function avatar(name, size = 32) {
+  let h = 0;
+  for (const c of String(name)) h = (h + c.charCodeAt(0)) % 4;
+  return `<span class="avatar av-${h}" style="--s:${size}px" aria-hidden="true">${esc(initials(name))}</span>`;
+}
+
+const postHref = (p) => `post.html?id=${encodeURIComponent(p.id)}`;
+
+/* ---------- API ---------- */
 // One function for every API call
 async function api(path, { method = "GET", body, auth = false } = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -47,6 +96,7 @@ async function api(path, { method = "GET", body, auth = false } = {}) {
   return data;
 }
 
+/* ---------- UI helpers ---------- */
 function showMsg(text, type = "error") {
   const box = document.getElementById("formMsg");
   box.textContent = text;
@@ -62,91 +112,443 @@ function requireLogin() {
   return true;
 }
 
-/* ---------- Header / nav ---------- */
+function setBusy(btn, busy) {
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.label = btn.textContent;
+    btn.textContent = "Please wait…";
+  } else if (btn.dataset.label) {
+    btn.textContent = btn.dataset.label;
+  }
+  btn.disabled = busy;
+}
+
+// Toast notifications
+function toast(text, type = "success") {
+  let box = document.getElementById("toasts");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toasts";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+    document.body.appendChild(box);
+  }
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = text;
+  box.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 250);
+  }, 3500);
+}
+
+// A message that survives a page redirect
+function flash(text, type = "success") {
+  try { sessionStorage.setItem(FLASH_KEY, JSON.stringify({ text, type })); } catch { /* ignore */ }
+}
+function showFlash() {
+  try {
+    const raw = sessionStorage.getItem(FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(FLASH_KEY);
+    const { text, type } = JSON.parse(raw);
+    toast(text, type);
+  } catch { /* ignore */ }
+}
+
+// Confirmation modal (native <dialog>: focus trap and Esc come built in)
+function confirmDialog({ title, text, confirmLabel = "Confirm", danger = false }) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "modal";
+    dlg.innerHTML = `
+      <div class="modal-body">
+        <h2>${esc(title)}</h2>
+        <p class="muted">${esc(text)}</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-act="cancel">Cancel</button>
+          <button type="button" class="btn ${danger ? "btn-danger" : "btn-primary"}" data-act="ok">${esc(confirmLabel)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(dlg);
+
+    const done = (value) => { dlg.close(); dlg.remove(); resolve(value); };
+    dlg.addEventListener("click", (e) => {
+      const act = e.target.dataset ? e.target.dataset.act : null;
+      if (act === "ok") done(true);
+      else if (act === "cancel" || e.target === dlg) done(false);
+    });
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(false); });
+    dlg.showModal();
+    dlg.querySelector('[data-act="cancel"]').focus();
+  });
+}
+
+// Empty and error states
+function stateHTML({ icon: ic = "pen", title, text = "", action = "" }) {
+  return `<div class="state">
+    <div class="state-icon">${icon(ic, 26)}</div>
+    <h3>${esc(title)}</h3>
+    ${text ? `<p class="muted">${esc(text)}</p>` : ""}
+    ${action}
+  </div>`;
+}
+const retryBtn = `<button type="button" class="btn btn-ghost btn-sm" data-retry>Try again</button>`;
+
+// Loading skeletons
+const skeletonList = (n = 3) => Array.from({ length: n }, () => `
+  <div class="post-item" aria-hidden="true">
+    <div class="skeleton" style="width:80px;height:22px"></div>
+    <div class="skeleton" style="width:70%;height:30px;margin:.8rem 0"></div>
+    <div class="skeleton" style="width:95%"></div>
+    <div class="skeleton" style="width:60%;margin-top:.5rem"></div>
+  </div>`).join("");
+
+const skeletonRows = (n = 3) => Array.from({ length: n }, () =>
+  `<div class="row-card" aria-hidden="true"><div class="skeleton" style="width:60%;height:26px"></div></div>`).join("");
+
+/* ---------- Theme ---------- */
+const currentTheme = () => (document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+
+function updateThemeButtons() {
+  const dark = currentTheme() === "dark";
+  document.querySelectorAll(".theme-toggle").forEach((btn) => {
+    const ti = btn.querySelector(".ti");
+    if (ti) ti.innerHTML = icon(dark ? "sun" : "moon", 20);
+    const label = btn.querySelector(".label");
+    if (label) label.textContent = dark ? "Light mode" : "Dark mode";
+    btn.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+  });
+}
+
+function bindTheme() {
+  document.querySelectorAll(".theme-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem(THEME_KEY, next); } catch { /* ignore */ }
+      updateThemeButtons();
+    });
+  });
+  updateThemeButtons();
+}
+
+/* ---------- Header, footer, icons ---------- */
+const NAV_ACTIVE = { home: "home", post: "home", dashboard: "dashboard", create: "create" };
+const AUTH_PAGES = ["login", "register"];
+
+const brandHTML = () =>
+  `<a class="brand" href="index.html"><span class="brand-mark">${icon("logo", 26)}</span><span class="brand-name">Inkwell</span></a>`;
+const themeIconBtn = (extra = "") =>
+  `<button type="button" class="icon-btn theme-toggle ${extra}"><span class="ti"></span></button>`;
+const themeNavBtn = () =>
+  `<button type="button" class="nav-link theme-toggle nav-theme"><span class="ti"></span><span class="label"></span></button>`;
+
 function renderHeader() {
   const header = document.getElementById("site-header");
   if (!header) return;
+  const page = document.body.dataset.page;
   const user = getSession();
 
-  const links = user
-    ? `<a href="index.html">Home</a>
-       <a href="dashboard.html">Dashboard</a>
-       <a href="create-blog.html">New Post</a>
-       <a href="#" id="logoutBtn">Logout</a>`
-    : `<a href="index.html">Home</a>
-       <a href="login.html">Login</a>
-       <a href="register.html" class="btn btn-small">Register</a>`;
+  if (AUTH_PAGES.includes(page)) {
+    document.documentElement.classList.remove("authed");
+    header.innerHTML = `<div class="auth-tools">${themeIconBtn()}</div>`;
+  } else if (user) {
+    document.documentElement.classList.add("authed");
+    const active = NAV_ACTIVE[page];
+    const link = (key, href, ic, label) =>
+      `<a class="nav-link" href="${href}"${active === key ? ' aria-current="page"' : ""}>${icon(ic, 20)}<span>${label}</span></a>`;
 
-  header.innerHTML = `
-    <div class="container nav">
-      <a class="brand" href="index.html">Inkwell</a>
-      <button class="menu-btn" id="menuBtn" aria-label="Toggle menu" aria-expanded="false">&#9776;</button>
-      <nav id="navLinks">${links}</nav>
-    </div>`;
-
-  const menuBtn = document.getElementById("menuBtn");
-  const nav = document.getElementById("navLinks");
-  menuBtn.addEventListener("click", () => {
-    const open = nav.classList.toggle("open");
-    menuBtn.setAttribute("aria-expanded", open);
-  });
+    header.innerHTML = `
+      <div class="topbar">
+        <div class="topbar-inner">
+          ${brandHTML()}
+          ${themeIconBtn("topbar-theme")}
+        </div>
+      </div>
+      <nav id="navLinks" class="nav-app" aria-label="Main">
+        ${link("home", "index.html", "home", "Home")}
+        ${link("dashboard", "dashboard.html", "dashboard", "Dashboard")}
+        ${link("create", "create-blog.html", "pen", "Create Blog")}
+        <span class="nav-spacer"></span>
+        <div class="nav-user">
+          ${avatar(user.name, 36)}
+          <div><strong>${esc(user.name)}</strong><small>${esc(user.email)}</small></div>
+        </div>
+        ${themeNavBtn()}
+        <button type="button" class="nav-link" id="logoutBtn">${icon("logout", 20)}<span>Log out</span></button>
+      </nav>`;
+  } else {
+    document.documentElement.classList.remove("authed");
+    header.innerHTML = `
+      <div class="topbar">
+        <div class="container topbar-inner">
+          ${brandHTML()}
+          <nav id="navLinks" class="nav-guest" aria-label="Main">
+            <a class="nav-text hide-sm" href="index.html">Home</a>
+            <a class="nav-text" href="login.html">Log in</a>
+            <a class="btn btn-primary btn-sm" href="register.html">Join Inkwell</a>
+            ${themeIconBtn()}
+          </nav>
+        </div>
+      </div>`;
+  }
 
   const logout = document.getElementById("logoutBtn");
   if (logout) {
-    logout.addEventListener("click", (e) => {
-      e.preventDefault();
+    logout.addEventListener("click", () => {
       clearSession();
+      flash("You've been logged out.");
       window.location.href = "login.html";
     });
   }
+  bindTheme();
 }
 
-async function initHome() {
-  const wrap = document.getElementById("posts");
-  wrap.innerHTML = `<p class="muted">Loading posts…</p>`;
+function renderFooter() {
+  const footer = document.getElementById("site-footer");
+  if (!footer) return;
+  footer.innerHTML = `
+    <div class="container footer-inner">
+      <span class="footer-brand">${icon("logo", 18)} Inkwell</span>
+      <span>Every thought has a place.</span>
+      <span>&copy; 2026</span>
+    </div>`;
+}
 
-  try {
-    const posts = await api("/posts");
-    if (posts.length === 0) {
-      wrap.innerHTML = `<p class="muted">No posts yet. Be the first to write one!</p>`;
-      return;
-    }
-    wrap.innerHTML = posts.map((p) => {
-      const link = `post.html?id=${encodeURIComponent(p.id)}`;
-      return `
-      <article class="card post">
-        <span class="tag">${esc(p.category)}</span>
-        <h3><a href="${link}">${esc(p.title)}</a></h3>
-        <p>${esc(p.content.length > 140 ? p.content.slice(0, 140) + "…" : p.content)}</p>
-        <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
-        <a class="read-more" href="${link}">Read more &rarr;</a>
-      </article>`;
-    }).join("");
-  } catch (err) {
-    wrap.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+// Fill any <span data-icon="name" data-size="20"> placeholders in the HTML
+function hydrateIcons() {
+  document.querySelectorAll("[data-icon]").forEach((el) => {
+    el.innerHTML = icon(el.dataset.icon, Number(el.dataset.size) || 20);
+  });
+}
+
+function bindPasswordToggles() {
+  document.querySelectorAll(".pw-toggle").forEach((btn) => {
+    const input = btn.parentElement.querySelector("input");
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.innerHTML = icon(show ? "eyeOff" : "eye", 20);
+      btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+      btn.setAttribute("aria-pressed", String(show));
+    });
+  });
+}
+
+/* ---------- Article components ---------- */
+function bylineHTML(p, size = 28) {
+  return `<div class="byline">
+    ${avatar(p.author, size)}
+    <span class="byline-name">${esc(p.author)}</span>
+    <span class="sep" aria-hidden="true">·</span>
+    <time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time>
+    <span class="sep" aria-hidden="true">·</span>
+    <span>${readingTime(p.content)} min read</span>
+  </div>`;
+}
+
+const tagBtn = (c) => `<button type="button" class="tag" data-cat="${esc(c)}">${esc(c)}</button>`;
+
+function postItem(p) {
+  return `<article class="post-item">
+    ${tagBtn(p.category)}
+    <h3><a class="card-link" href="${postHref(p)}">${esc(p.title)}</a></h3>
+    <p class="excerpt">${esc(excerpt(p.content, 170))}</p>
+    ${bylineHTML(p)}
+  </article>`;
+}
+
+function leadCard(p) {
+  return `<article class="lead">
+    <span class="eyebrow">Featured</span>
+    <h3><a class="card-link" href="${postHref(p)}">${esc(p.title)}</a></h3>
+    <p class="excerpt">${esc(excerpt(p.content, 240))}</p>
+    <div class="lead-foot">
+      <span class="tag">${esc(p.category)}</span>
+      ${bylineHTML(p, 32)}
+    </div>
+  </article>`;
+}
+
+function miniCard(p) {
+  return `<article class="mini">
+    <span class="tag">${esc(p.category)}</span>
+    <h3><a class="card-link" href="${postHref(p)}">${esc(p.title)}</a></h3>
+    <p class="excerpt">${esc(excerpt(p.content, 100))}</p>
+    ${bylineHTML(p, 24)}
+  </article>`;
+}
+
+/* ---------- Page: Home ---------- */
+async function initHome() {
+  const user = getSession();
+  if (user) {
+    document.getElementById("ctaWrite").href = "create-blog.html";
+    document.getElementById("joinCard").hidden = true;
   }
+
+  const featuredSection = document.getElementById("featuredSection");
+  const featuredEl = document.getElementById("featured");
+  const listEl = document.getElementById("posts");
+  const filterEl = document.getElementById("activeFilter");
+  const topicsEl = document.getElementById("topics");
+  const writersEl = document.getElementById("writers");
+  const statsEl = document.getElementById("heroStats");
+  const search = document.getElementById("postSearch");
+  const state = { posts: [], query: "", category: "" };
+
+  const jumpToLatest = () =>
+    document.getElementById("latest").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  function render() {
+    const { posts, category } = state;
+    const q = state.query.trim().toLowerCase();
+    const filtering = Boolean(q || category);
+
+    // Writers, ranked by number of articles
+    const writerMap = new Map();
+    posts.forEach((p) => {
+      const w = writerMap.get(p.authorId) || { name: p.author, count: 0 };
+      w.count += 1;
+      writerMap.set(p.authorId, w);
+    });
+
+    statsEl.textContent = posts.length
+      ? `${posts.length} ${posts.length === 1 ? "article" : "articles"} from ${writerMap.size} ${writerMap.size === 1 ? "writer" : "writers"}`
+      : "";
+
+    // Featured: the three newest articles (hidden while searching or filtering)
+    const featuredIds = new Set();
+    if (!filtering && posts.length) {
+      const leadPosts = posts.slice(0, 3);
+      leadPosts.forEach((p) => featuredIds.add(p.id));
+      featuredEl.innerHTML =
+        leadCard(leadPosts[0]) +
+        (leadPosts.length > 1 ? `<div class="featured-more">${leadPosts.slice(1).map(miniCard).join("")}</div>` : "");
+      featuredSection.hidden = false;
+    } else {
+      featuredSection.hidden = true;
+    }
+
+    // Latest list
+    let items = posts.filter((p) => !featuredIds.has(p.id));
+    if (category) items = items.filter((p) => p.category === category);
+    if (q) {
+      items = items.filter((p) =>
+        [p.title, p.content, p.author, p.category].some((f) => String(f).toLowerCase().includes(q)));
+    }
+
+    filterEl.innerHTML = filtering
+      ? `<p class="filter-note">${items.length} ${items.length === 1 ? "result" : "results"}${q ? ` for “${esc(state.query.trim())}”` : ""}${category ? ` in ${esc(category)}` : ""}. <button type="button" class="link-btn" data-clear>Clear</button></p>`
+      : "";
+
+    if (items.length) {
+      listEl.innerHTML = items.map(postItem).join("");
+    } else if (filtering) {
+      listEl.innerHTML = stateHTML({ icon: "search", title: "No articles found", text: "Try a different search or topic." });
+    } else if (!posts.length) {
+      listEl.innerHTML = stateHTML({
+        icon: "pen", title: "No articles yet", text: "Be the first to publish something.",
+        action: `<a class="btn btn-primary" href="${user ? "create-blog.html" : "register.html"}">Start writing</a>`,
+      });
+    } else {
+      listEl.innerHTML = `<p class="muted caught-up">You're all caught up. New articles will appear here.</p>`;
+    }
+
+    // Trending topics: categories ranked by article count
+    const counts = new Map();
+    posts.forEach((p) => counts.set(p.category, (counts.get(p.category) || 0) + 1));
+    const topics = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    topicsEl.innerHTML = topics.length
+      ? topics.map(([c, n]) => `<button type="button" class="topic${c === category ? " is-active" : ""}" data-topic="${esc(c)}" aria-pressed="${c === category}"><span>${esc(c)}</span><span class="count">${n}</span></button>`).join("")
+      : `<p class="muted">Topics appear as articles are published.</p>`;
+
+    // Writers to read
+    const topWriters = [...writerMap.values()]
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 5);
+    writersEl.innerHTML = topWriters.length
+      ? topWriters.map((w) => `<button type="button" class="writer" data-writer="${esc(w.name)}">${avatar(w.name, 36)}<span class="writer-text"><strong>${esc(w.name)}</strong><small>${w.count} ${w.count === 1 ? "article" : "articles"}</small></span></button>`).join("")
+      : `<p class="muted">Writers will show up here.</p>`;
+  }
+
+  async function load() {
+    listEl.innerHTML = skeletonList(3);
+    try {
+      state.posts = await api("/posts");
+      render();
+    } catch (err) {
+      featuredSection.hidden = true;
+      listEl.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load articles", text: err.message, action: retryBtn });
+      listEl.querySelector("[data-retry]").addEventListener("click", load);
+    }
+  }
+
+  search.addEventListener("input", () => { state.query = search.value; render(); });
+
+  document.getElementById("explore").addEventListener("click", (e) => {
+    const cat = e.target.closest("[data-cat]");
+    const topic = e.target.closest("[data-topic]");
+    const writer = e.target.closest("[data-writer]");
+    const clear = e.target.closest("[data-clear]");
+    if (cat) {
+      state.category = cat.dataset.cat;
+      render();
+    } else if (topic) {
+      state.category = state.category === topic.dataset.topic ? "" : topic.dataset.topic;
+      render();
+      jumpToLatest();
+    } else if (writer) {
+      state.query = writer.dataset.writer;
+      search.value = state.query;
+      render();
+      jumpToLatest();
+    } else if (clear) {
+      state.query = "";
+      state.category = "";
+      search.value = "";
+      render();
+    }
+  });
+
+  load();
 }
 
 /* ---------- Page: Register ---------- */
 function initRegister() {
+  const pw = document.getElementById("password");
+  const cf = document.getElementById("confirm");
+  const hint = document.getElementById("confirmHint");
+
+  const checkMatch = () => {
+    if (!cf.value) { hint.textContent = ""; hint.className = "field-hint"; return; }
+    const ok = pw.value === cf.value;
+    hint.textContent = ok ? "Passwords match." : "Passwords don't match yet.";
+    hint.className = `field-hint ${ok ? "ok" : "bad"}`;
+  };
+  pw.addEventListener("input", checkMatch);
+  cf.addEventListener("input", checkMatch);
+
   document.getElementById("registerForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = document.getElementById("name").value.trim();
     const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-    const confirm = document.getElementById("confirm").value;
+    const password = pw.value;
+    const confirm = cf.value;
 
     if (password !== confirm) return showMsg("Passwords do not match.");
 
     const btn = e.target.querySelector("button[type=submit]");
-    btn.disabled = true;
+    setBusy(btn, true);
     try {
       await api("/auth/register", { method: "POST", body: { name, email, password } });
-      showMsg("Account created! Redirecting to login…", "success");
-      setTimeout(() => (window.location.href = "login.html"), 1000);
+      flash("Account created. Log in to start writing.");
+      window.location.href = "login.html";
     } catch (err) {
       showMsg(err.message);
-      btn.disabled = false;
+      setBusy(btn, false);
     }
   });
 }
@@ -161,14 +563,14 @@ function initLogin() {
     const password = document.getElementById("password").value;
 
     const btn = e.target.querySelector("button[type=submit]");
-    btn.disabled = true;
+    setBusy(btn, true);
     try {
       const data = await api("/auth/login", { method: "POST", body: { email, password } });
       setSession({ token: data.token, ...data.user });
       window.location.href = "dashboard.html";
     } catch (err) {
       showMsg(err.message);
-      btn.disabled = false;
+      setBusy(btn, false);
     }
   });
 }
@@ -177,11 +579,29 @@ function initLogin() {
 async function initDashboard() {
   if (!requireLogin()) return;
   const user = getSession();
-  document.getElementById("welcome").textContent = `Welcome, ${user.name}`;
+  const first = String(user.name).trim().split(/\s+/)[0];
+  document.getElementById("welcome").textContent = `Welcome back, ${first}.`;
 
   const list = document.getElementById("myPosts");
 
+  const rowCard = (p) => `
+    <article class="row-card">
+      <div class="row-main">
+        <h3><a href="${postHref(p)}">${esc(p.title)}</a></h3>
+        <div class="row-meta">
+          <span class="tag">${esc(p.category)}</span>
+          <time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time>
+          <span>${readingTime(p.content)} min read</span>
+        </div>
+      </div>
+      <div class="row-actions">
+        <a class="btn btn-ghost btn-sm" href="${postHref(p)}">View</a>
+        <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" data-id="${esc(p.id)}" data-title="${esc(p.title)}">Delete</button>
+      </div>
+    </article>`;
+
   async function render() {
+    list.innerHTML = skeletonRows(3);
     try {
       const [mine, all] = await Promise.all([
         api("/posts/mine", { auth: true }),
@@ -189,34 +609,42 @@ async function initDashboard() {
       ]);
 
       document.getElementById("statPosts").textContent = mine.length;
+      document.getElementById("statWords").textContent =
+        mine.reduce((n, p) => n + wordCount(p.content), 0).toLocaleString("en-GB");
       document.getElementById("statAll").textContent = all.length;
 
       if (mine.length === 0) {
-        list.innerHTML = `<p class="muted">You haven't written anything yet. <a href="create-blog.html">Create your first post</a>.</p>`;
+        list.innerHTML = stateHTML({
+          icon: "pen",
+          title: "Nothing published yet",
+          text: "Your first article is one idea away.",
+          action: `<a class="btn btn-primary" href="create-blog.html">Write your first article</a>`,
+        });
         return;
       }
-      list.innerHTML = mine.map((p) => `
-        <div class="card row">
-          <div>
-            <h3><a href="post.html?id=${encodeURIComponent(p.id)}">${esc(p.title)}</a></h3>
-            <span class="tag">${esc(p.category)}</span>
-            <span class="meta">&nbsp;${esc(p.date)}</span>
-          </div>
-          <button class="btn btn-danger btn-small" data-id="${esc(p.id)}">Delete</button>
-        </div>`).join("");
+      list.innerHTML = mine.map(rowCard).join("");
     } catch (err) {
-      list.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+      list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your articles", text: err.message, action: retryBtn });
+      list.querySelector("[data-retry]").addEventListener("click", render);
     }
   }
 
   list.addEventListener("click", async (e) => {
-    const id = e.target.dataset.id;
-    if (!id || !confirm("Delete this post?")) return;
+    const btn = e.target.closest("[data-id]");
+    if (!btn) return;
+    const ok = await confirmDialog({
+      title: "Delete this article?",
+      text: `“${btn.dataset.title}” will be permanently removed. This can't be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await api(`/posts/${encodeURIComponent(id)}`, { method: "DELETE", auth: true });
+      await api(`/posts/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE", auth: true });
+      toast("Article deleted.");
       render();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   });
 
@@ -226,52 +654,161 @@ async function initDashboard() {
 /* ---------- Page: Create Blog ---------- */
 function initCreate() {
   if (!requireLogin()) return;
+  const user = getSession();
 
-  document.getElementById("blogForm").addEventListener("submit", async (e) => {
+  const form = document.getElementById("blogForm");
+  const titleEl = document.getElementById("title");
+  const catEl = document.getElementById("category");
+  const contentEl = document.getElementById("content");
+  const wordsEl = document.getElementById("wordCount");
+  const charsEl = document.getElementById("charCount");
+  const editor = document.getElementById("editorPane");
+  const preview = document.getElementById("previewPane");
+  const previewBtn = document.getElementById("previewBtn");
+  let dirty = false;
+  let leaving = false;
+
+  const updateCounts = () => {
+    const w = wordCount(contentEl.value);
+    wordsEl.textContent = `${w} ${w === 1 ? "word" : "words"}`;
+    charsEl.textContent = `${contentEl.value.length} / 5000`;
+  };
+  contentEl.addEventListener("input", updateCounts);
+  [titleEl, catEl, contentEl].forEach((el) => el.addEventListener("input", () => { dirty = true; }));
+
+  // Warn before losing an unpublished draft
+  window.addEventListener("beforeunload", (e) => {
+    if (dirty && !leaving) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  // Preview: shows how the article will look, built from what's typed (no backend needed)
+  previewBtn.addEventListener("click", () => {
+    if (!preview.hidden) {
+      preview.hidden = true;
+      editor.hidden = false;
+      previewBtn.textContent = "Preview";
+      return;
+    }
+    const title = titleEl.value.trim() || "Untitled";
+    const category = catEl.value || "Uncategorised";
+    const content = contentEl.value.trim();
+    preview.innerHTML = `
+      <span class="tag">${esc(category)}</span>
+      <h1 class="article-title">${esc(title)}</h1>
+      <div class="article-meta">
+        ${avatar(user.name, 40)}
+        <div class="article-by"><strong>${esc(user.name)}</strong><span>Preview · ${readingTime(content)} min read</span></div>
+      </div>
+      <div class="article-body">${esc(content || "Start writing to see your article here.")}</div>`;
+    preview.hidden = false;
+    editor.hidden = true;
+    previewBtn.textContent = "Back to editing";
+  });
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const title = document.getElementById("title").value.trim();
-    const category = document.getElementById("category").value;
-    const content = document.getElementById("content").value.trim();
+    const title = titleEl.value.trim();
+    const category = catEl.value;
+    const content = contentEl.value.trim();
 
-    const btn = e.target.querySelector("button[type=submit]");
-    btn.disabled = true;
+    const btn = form.querySelector("button[type=submit]");
+    setBusy(btn, true);
     try {
       await api("/posts", { method: "POST", auth: true, body: { title, category, content } });
-      showMsg("Post published! Redirecting…", "success");
-      setTimeout(() => (window.location.href = "dashboard.html"), 800);
+      leaving = true;
+      flash("Article published.");
+      window.location.href = "dashboard.html";
     } catch (err) {
       showMsg(err.message);
-      btn.disabled = false;
+      setBusy(btn, false);
     }
   });
+
+  updateCounts();
 }
 
 /* ---------- Page: Single post ---------- */
+async function loadRelated(current) {
+  const box = document.getElementById("related");
+  const listEl = document.getElementById("relatedList");
+  try {
+    const all = await api("/posts");
+    const others = all.filter((p) => p.id !== current.id);
+    const picks = [
+      ...others.filter((p) => p.category === current.category),
+      ...others.filter((p) => p.category !== current.category),
+    ].slice(0, 3);
+    if (!picks.length) return;
+    listEl.innerHTML = picks.map(miniCard).join("");
+    box.hidden = false;
+  } catch { /* related articles are optional */ }
+}
+
 async function initPost() {
   const view = document.getElementById("postView");
   const id = new URLSearchParams(window.location.search).get("id");
 
   if (!id) {
-    view.innerHTML = `<p class="msg error">No post selected.</p>`;
+    view.innerHTML = stateHTML({
+      icon: "alert", title: "No article selected",
+      action: `<a class="btn btn-primary" href="index.html">Browse articles</a>`,
+    });
     return;
   }
 
-  try {
-    const p = await api(`/posts/${encodeURIComponent(id)}`);
-    document.title = `Inkwell | ${p.title}`;
-    view.innerHTML = `
-      <span class="tag">${esc(p.category)}</span>
-      <h1>${esc(p.title)}</h1>
-      <div class="meta">By ${esc(p.author)} &middot; ${esc(p.date)}</div>
-      <div class="article-body">${esc(p.content)}</div>`;
-  } catch (err) {
-    view.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+  view.innerHTML = `
+    <div aria-hidden="true">
+      <div class="skeleton" style="width:90px;height:22px"></div>
+      <div class="skeleton" style="width:85%;height:46px;margin:1.2rem 0"></div>
+      <div class="skeleton" style="width:50%;margin-bottom:2rem"></div>
+      <div class="skeleton" style="width:100%;margin:.6rem 0"></div>
+      <div class="skeleton" style="width:96%;margin:.6rem 0"></div>
+      <div class="skeleton" style="width:70%;margin:.6rem 0"></div>
+    </div>`;
+
+  async function load() {
+    try {
+      const p = await api(`/posts/${encodeURIComponent(id)}`);
+      document.title = `${p.title} · Inkwell`;
+      view.innerHTML = `
+        <span class="tag">${esc(p.category)}</span>
+        <h1 class="article-title">${esc(p.title)}</h1>
+        <div class="article-meta">
+          ${avatar(p.author, 44)}
+          <div class="article-by">
+            <strong>${esc(p.author)}</strong>
+            <span><time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time> · ${readingTime(p.content)} min read</span>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
+        </div>
+        <div class="article-body">${esc(p.content)}</div>`;
+
+      document.getElementById("copyLink").addEventListener("click", () => {
+        navigator.clipboard.writeText(window.location.href)
+          .then(() => toast("Link copied."))
+          .catch(() => toast("Couldn't copy the link.", "error"));
+      });
+
+      loadRelated(p);
+    } catch (err) {
+      view.innerHTML = stateHTML({
+        icon: "alert", title: "Couldn't open this article", text: err.message,
+        action: `<a class="btn btn-primary" href="index.html">Back to all articles</a>`,
+      });
+    }
   }
+
+  load();
 }
 
 /* ---------- Boot ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   renderHeader();
+  renderFooter();
+  hydrateIcons();
+  bindPasswordToggles();
+  showFlash();
+
   const page = document.body.dataset.page;
   const pages = {
     home: initHome, register: initRegister, login: initLogin,
