@@ -68,6 +68,14 @@ const postHref = (p) => `post.html?id=${encodeURIComponent(p.id)}`;
 const isThought = (p) => p.type === "thought";
 const isArticle = (p) => !isThought(p);
 
+const isOwner = (p) => {
+  const s = getSession();
+  return Boolean(s && s.id === p.authorId);
+};
+const editLink = (p) => isOwner(p)
+  ? `<a class="btn btn-ghost btn-sm" href="create-blog.html?edit=${encodeURIComponent(p.id)}">${icon("pen", 16)} Edit</a>`
+  : "";
+
 function timeAgo(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "";
@@ -648,6 +656,7 @@ async function initDashboard() {
   const actions = (p, label) => `
     <div class="row-actions">
       <a class="btn btn-ghost btn-sm" href="${postHref(p)}">View</a>
+      <a class="btn btn-ghost btn-sm" href="create-blog.html?edit=${encodeURIComponent(p.id)}">Edit</a>
       <button type="button" class="btn btn-ghost btn-sm btn-danger-ghost" data-id="${esc(p.id)}" data-kind="${esc(p.type)}" data-title="${esc(label)}">Delete</button>
     </div>`;
 
@@ -764,6 +773,7 @@ async function initDashboard() {
 function initCreate() {
   if (!requireLogin()) return;
   const user = getSession();
+  const editId = new URLSearchParams(window.location.search).get("edit");
 
   const form = document.getElementById("blogForm");
   const titleEl = document.getElementById("title");
@@ -779,6 +789,8 @@ function initCreate() {
   const editor = document.getElementById("editorPane");
   const preview = document.getElementById("previewPane");
   const previewBtn = document.getElementById("previewBtn");
+  const picker = document.querySelector(".type-picker");
+  const submitBtn = form.querySelector("button[type=submit]");
   let type = "article";
   let dirty = false;
   let leaving = false;
@@ -799,7 +811,7 @@ function initCreate() {
   thoughtEl.addEventListener("input", updateThoughtCount);
   [titleEl, catEl, contentEl, thoughtEl].forEach((el) => el.addEventListener("input", () => { dirty = true; }));
 
-  // Warn before losing an unpublished draft
+  // Warn before losing unsaved changes
   window.addEventListener("beforeunload", (e) => {
     if (dirty && !leaving) { e.preventDefault(); e.returnValue = ""; }
   });
@@ -825,10 +837,41 @@ function initCreate() {
     radio.addEventListener("change", () => setType(radio.value, true));
   });
 
-  // Dashboard links here with ?type=thought to open the thought composer directly
-  if (new URLSearchParams(window.location.search).get("type") === "thought") {
-    document.querySelector('input[name="type"][value="thought"]').checked = true;
-    setType("thought", false);
+  // Edit mode: load the post, fill the form, lock the type
+  async function loadForEdit() {
+    picker.hidden = true;
+    editor.hidden = true;
+    submitBtn.disabled = true;
+    previewBtn.disabled = true;
+    kindEl.textContent = "Loading…";
+
+    try {
+      const p = await api(`/posts/${encodeURIComponent(editId)}`);
+      if (p.authorId !== user.id) {
+        flash("You can only edit your own posts.", "error");
+        window.location.href = "dashboard.html";
+        return;
+      }
+
+      setType(p.type, false);
+      if (p.type === "thought") {
+        thoughtEl.value = p.content;
+      } else {
+        titleEl.value = p.title;
+        catEl.value = p.category;
+        contentEl.value = p.content;
+      }
+      kindEl.textContent = p.type === "thought" ? "Edit thought" : "Edit article";
+      submitBtn.textContent = "Save changes";
+      submitBtn.disabled = false;
+      previewBtn.disabled = false;
+      updateCounts();
+      updateThoughtCount();
+      dirty = false;
+    } catch (err) {
+      kindEl.textContent = "Edit";
+      showMsg(err.message);
+    }
   }
 
   // Preview: shows how the post will look, built from what's typed (no backend needed)
@@ -875,18 +918,32 @@ function initCreate() {
       ? { type, content: thoughtEl.value.trim() }
       : { type, title: titleEl.value.trim(), category: catEl.value, content: contentEl.value.trim() };
 
-    const btn = form.querySelector("button[type=submit]");
-    setBusy(btn, true);
+    setBusy(submitBtn, true);
     try {
-      await api("/posts", { method: "POST", auth: true, body });
-      leaving = true;
-      flash(type === "thought" ? "Thought shared." : "Article published.");
-      window.location.href = type === "thought" ? "dashboard.html?tab=thoughts" : "dashboard.html";
+      if (editId) {
+        const saved = await api(`/posts/${encodeURIComponent(editId)}`, { method: "PUT", auth: true, body });
+        leaving = true;
+        flash("Changes saved.");
+        window.location.href = postHref(saved);
+      } else {
+        await api("/posts", { method: "POST", auth: true, body });
+        leaving = true;
+        flash(type === "thought" ? "Thought shared." : "Article published.");
+        window.location.href = type === "thought" ? "dashboard.html?tab=thoughts" : "dashboard.html";
+      }
     } catch (err) {
       showMsg(err.message);
-      setBusy(btn, false);
+      setBusy(submitBtn, false);
     }
   });
+
+  if (editId) {
+    loadForEdit();
+  } else if (new URLSearchParams(window.location.search).get("type") === "thought") {
+    // Dashboard links here with ?type=thought to open the thought composer directly
+    document.querySelector('input[name="type"][value="thought"]').checked = true;
+    setType("thought", false);
+  }
 
   updateCounts();
   updateThoughtCount();
@@ -943,6 +1000,8 @@ async function initPost() {
       <div class="skeleton" style="width:70%;margin:.6rem 0"></div>
     </div>`;
 
+  const copyBtn = `<button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>`;
+
   const articleHTML = (p) => `
     <span class="tag">${esc(p.category)}</span>
     <h1 class="article-title">${esc(p.title)}</h1>
@@ -950,9 +1009,10 @@ async function initPost() {
       ${avatar(p.author, 44)}
       <div class="article-by">
         <strong>${esc(p.author)}</strong>
-        <span><time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time> · ${readingTime(p.content)} min read</span>
+        <span><time datetime="${esc(p.date)}">${esc(fmtDate(p.date))}</time> · ${readingTime(p.content)} min read${p.updatedAt ? " · Edited" : ""}</span>
       </div>
-      <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
+      ${editLink(p)}
+      ${copyBtn}
     </div>
     <div class="article-body">${esc(p.content)}</div>`;
 
@@ -964,8 +1024,8 @@ async function initPost() {
       </div>
       <p class="thought-view-text">${esc(p.content)}</p>
       <div class="thought-view-foot">
-        <time datetime="${esc(p.createdAt)}">${esc(fmtDateTime(p.createdAt))}</time>
-        <button type="button" class="btn btn-ghost btn-sm" id="copyLink">${icon("link", 16)} Copy link</button>
+        <time datetime="${esc(p.createdAt)}">${esc(fmtDateTime(p.createdAt))}${p.updatedAt ? " · Edited" : ""}</time>
+        <div class="row-actions">${editLink(p)}${copyBtn}</div>
       </div>
     </div>`;
 
