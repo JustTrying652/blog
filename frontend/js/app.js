@@ -20,6 +20,7 @@ const ICONS = {
   arrowLeft: '<path d="M19 12H5M11 5l-7 7 7 7"/>',
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
   message: '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+  user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -121,8 +122,7 @@ async function api(path, { method = "GET", body, auth = false } = {}) {
   if (!res.ok) {
     // Token expired or invalid on a protected request: back to login
     if (res.status === 401 && auth) {
-      clearSession();
-      window.location.href = "login.html";
+      redirectToLogin("Your session expired. Please log in again.");
     }
     throw new Error(data.error || "Something went wrong.");
   }
@@ -130,19 +130,64 @@ async function api(path, { method = "GET", body, auth = false } = {}) {
 }
 
 /* ---------- UI helpers ---------- */
-function showMsg(text, type = "error") {
-  const box = document.getElementById("formMsg");
+function showMsg(text, type = "error", id = "formMsg") {
+  const box = document.getElementById(id);
   box.textContent = text;
   box.className = `msg ${type}`;
   box.hidden = false;
 }
 
-function requireLogin() {
-  if (!getSession()) {
-    window.location.href = "login.html";
+// Decode the token's expiry (no verification: the server is the real authority,
+// this only saves a pointless request)
+function tokenExpired(token) {
+  try {
+    const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const { exp } = JSON.parse(atob(part));
+    return typeof exp === "number" && exp * 1000 <= Date.now();
+  } catch {
+    return true;
+  }
+}
+
+// Only these pages can be returned to after login (prevents open redirects)
+function safeNext() {
+  const next = new URLSearchParams(window.location.search).get("next") || "";
+  return /^(dashboard|create-blog|post|index)\.html(\?[\w%=&.-]*)?$/.test(next) ? next : "dashboard.html";
+}
+
+function redirectToLogin(message) {
+  clearSession();
+  if (message) flash(message, "error");
+  const here = window.location.pathname.split("/").pop() + window.location.search;
+  window.location.href = `login.html?next=${encodeURIComponent(here)}`;
+}
+
+function logout(message = "You've been logged out.") {
+  clearSession();
+  flash(message);
+  window.location.href = "login.html";
+}
+
+// Guard for private pages: a token must exist, be unexpired and be accepted by the server
+async function requireAuth() {
+  const session = getSession();
+  if (!session || !session.token) {
+    redirectToLogin();
     return false;
   }
-  return true;
+  if (tokenExpired(session.token)) {
+    redirectToLogin("Your session expired. Please log in again.");
+    return false;
+  }
+  try {
+    const { user } = await api("/auth/me", { auth: true });
+    setSession({ ...session, ...user }); // keeps name, email and join date fresh
+    return true;
+  } catch {
+    // api() already redirected on a 401. For anything else (server down),
+    // let the page show its own error state instead of bouncing the user.
+    return Boolean(getSession());
+  }
 }
 
 function setBusy(btn, busy) {
@@ -289,7 +334,8 @@ function renderHeader() {
     header.innerHTML = `<div class="auth-tools">${themeIconBtn()}</div>`;
   } else if (user) {
     document.documentElement.classList.add("authed");
-    const active = NAV_ACTIVE[page];
+    const onProfile = page === "dashboard" && new URLSearchParams(window.location.search).get("tab") === "profile";
+    const active = onProfile ? "profile" : NAV_ACTIVE[page];
     const link = (key, href, ic, label) =>
       `<a class="nav-link" href="${href}"${active === key ? ' aria-current="page"' : ""}>${icon(ic, 20)}<span>${label}</span></a>`;
 
@@ -304,6 +350,7 @@ function renderHeader() {
         ${link("home", "index.html", "home", "Home")}
         ${link("dashboard", "dashboard.html", "dashboard", "Dashboard")}
         ${link("create", "create-blog.html", "pen", "Create Blog")}
+        ${link("profile", "dashboard.html?tab=profile", "user", "Profile")}
         <span class="nav-spacer"></span>
         <div class="nav-user">
           ${avatar(user.name, 36)}
@@ -328,14 +375,8 @@ function renderHeader() {
       </div>`;
   }
 
-  const logout = document.getElementById("logoutBtn");
-  if (logout) {
-    logout.addEventListener("click", () => {
-      clearSession();
-      flash("You've been logged out.");
-      window.location.href = "login.html";
-    });
-  }
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (logoutBtn) logoutBtn.addEventListener("click", () => logout());
   bindTheme();
 }
 
@@ -619,7 +660,7 @@ function initRegister() {
 
 /* ---------- Page: Login ---------- */
 function initLogin() {
-  if (getSession()) { window.location.href = "dashboard.html"; return; }
+  if (getSession()) { window.location.href = safeNext(); return; }
 
   document.getElementById("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -631,7 +672,7 @@ function initLogin() {
     try {
       const data = await api("/auth/login", { method: "POST", body: { email, password } });
       setSession({ token: data.token, ...data.user });
-      window.location.href = "dashboard.html";
+      window.location.href = safeNext();
     } catch (err) {
       showMsg(err.message);
       setBusy(btn, false);
@@ -641,16 +682,19 @@ function initLogin() {
 
 /* ---------- Page: Dashboard ---------- */
 async function initDashboard() {
-  if (!requireLogin()) return;
+  if (!(await requireAuth())) return;
   const user = getSession();
   const first = String(user.name).trim().split(/\s+/)[0];
-  document.getElementById("welcome").textContent = `Welcome back, ${first}.`;
+  const welcome = document.getElementById("welcome");
+  welcome.textContent = `Welcome back, ${first}.`;
 
   const list = document.getElementById("myPosts");
+  const panel = document.getElementById("profilePanel");
   const tabs = document.querySelectorAll(".tab");
+  const tabParam = new URLSearchParams(window.location.search).get("tab");
   const state = {
     mine: [],
-    tab: new URLSearchParams(window.location.search).get("tab") === "thoughts" ? "thought" : "article",
+    tab: tabParam === "thoughts" ? "thought" : tabParam === "profile" ? "profile" : "article",
   };
 
   const actions = (p, label) => `
@@ -686,12 +730,143 @@ async function initDashboard() {
       ${actions(p, excerpt(p.content, 60))}
     </article>`;
 
-  function renderList() {
+  /* ----- Profile tab ----- */
+  function renderProfile() {
+    const me = getSession();
+    const articles = state.mine.filter(isArticle).length;
+    const thoughts = state.mine.filter(isThought).length;
+    const since = new Date(me.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+
+    panel.innerHTML = `
+      <div class="profile-card profile-head">
+        ${avatar(me.name, 72)}
+        <div>
+          <h2>${esc(me.name)}</h2>
+          <p class="muted">${esc(me.email)}</p>
+          <p class="muted">${isNaN(new Date(me.createdAt)) ? "" : `Member since ${esc(since)} · `}${articles} ${articles === 1 ? "article" : "articles"} · ${thoughts} ${thoughts === 1 ? "thought" : "thoughts"}</p>
+        </div>
+      </div>
+
+      <div class="profile-grid">
+        <form id="nameForm" class="profile-card" novalidate>
+          <h3>Display name</h3>
+          <p class="muted">Shown on your articles and thoughts.</p>
+          <div id="nameMsg" class="msg" role="alert" hidden></div>
+          <div class="field">
+            <label for="profileName">Name</label>
+            <input type="text" id="profileName" maxlength="60" autocomplete="name" value="${esc(me.name)}" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Save name</button>
+        </form>
+
+        <form id="passwordForm" class="profile-card" novalidate>
+          <h3>Change password</h3>
+          <p class="muted">You stay logged in here. Every other device is logged out.</p>
+          <div id="passwordMsg" class="msg" role="alert" hidden></div>
+          <div class="field">
+            <label for="currentPassword">Current password</label>
+            <input type="password" id="currentPassword" autocomplete="current-password" required />
+          </div>
+          <div class="field">
+            <label for="newPassword">New password</label>
+            <input type="password" id="newPassword" autocomplete="new-password" required />
+            <p class="field-hint">At least 8 characters.</p>
+          </div>
+          <div class="field">
+            <label for="confirmPassword">Confirm new password</label>
+            <input type="password" id="confirmPassword" autocomplete="new-password" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Update password</button>
+        </form>
+      </div>
+
+      <div class="profile-card profile-session">
+        <div>
+          <h3>Sessions</h3>
+          <p class="muted">Log out of this device, or end every session on every device.</p>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn btn-ghost" id="profileLogout">Log out</button>
+          <button type="button" class="btn btn-ghost btn-danger-ghost" id="logoutAll">Log out everywhere</button>
+        </div>
+      </div>`;
+
+    panel.querySelector("#nameForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = panel.querySelector("#profileName").value.trim();
+      if (!name) return showMsg("Name can't be empty.", "error", "nameMsg");
+
+      const btn = e.target.querySelector("button[type=submit]");
+      setBusy(btn, true);
+      try {
+        const data = await api("/auth/me", { method: "PATCH", auth: true, body: { name } });
+        setSession({ ...getSession(), ...data.user });
+        welcome.textContent = `Welcome back, ${data.user.name.trim().split(/\s+/)[0]}.`;
+        renderHeader();   // refresh the sidebar name
+        renderProfile();
+        toast("Name updated.");
+      } catch (err) {
+        showMsg(err.message, "error", "nameMsg");
+        setBusy(btn, false);
+      }
+    });
+
+    panel.querySelector("#passwordForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const currentPassword = panel.querySelector("#currentPassword").value;
+      const newPassword = panel.querySelector("#newPassword").value;
+      const confirm = panel.querySelector("#confirmPassword").value;
+      if (newPassword !== confirm) return showMsg("New passwords do not match.", "error", "passwordMsg");
+
+      const btn = e.target.querySelector("button[type=submit]");
+      setBusy(btn, true);
+      try {
+        const data = await api("/auth/password", {
+          method: "POST", auth: true, body: { currentPassword, newPassword },
+        });
+        setSession({ token: data.token, ...data.user }); // fresh token: this device stays logged in
+        e.target.reset();
+        panel.querySelector("#passwordMsg").hidden = true;
+        toast("Password updated. Other devices were logged out.");
+      } catch (err) {
+        showMsg(err.message, "error", "passwordMsg");
+      }
+      setBusy(btn, false);
+    });
+
+    panel.querySelector("#profileLogout").addEventListener("click", () => logout());
+
+    panel.querySelector("#logoutAll").addEventListener("click", async () => {
+      const ok = await confirmDialog({
+        title: "Log out everywhere?",
+        text: "Every device, including this one, will need to log in again.",
+        confirmLabel: "Log out everywhere",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api("/auth/logout-all", { method: "POST", auth: true });
+        logout("You've been logged out of all devices.");
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
+  }
+
+  /* ----- Tabs and lists ----- */
+  function applyTab() {
     tabs.forEach((t) => {
       const on = t.dataset.tab === state.tab;
       t.classList.toggle("is-active", on);
       t.setAttribute("aria-pressed", String(on));
     });
+    list.hidden = state.tab === "profile";
+    panel.hidden = state.tab !== "profile";
+  }
+
+  function renderList() {
+    applyTab();
+    if (state.tab === "profile") { renderProfile(); return; }
 
     const wantThoughts = state.tab === "thought";
     const items = state.mine.filter((p) => isThought(p) === wantThoughts);
@@ -718,6 +893,7 @@ async function initDashboard() {
   async function load() {
     list.innerHTML = skeletonRows(3);
     try {
+      // /posts/mine returns only the posts whose author is the user in the verified token
       const [mine, all] = await Promise.all([
         api("/posts/mine", { auth: true }),
         api("/posts"),
@@ -738,11 +914,17 @@ async function initDashboard() {
     } catch (err) {
       list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your posts", text: err.message, action: retryBtn });
       list.querySelector("[data-retry]").addEventListener("click", load);
+      applyTab();
+      if (state.tab === "profile") renderProfile();
     }
   }
 
   tabs.forEach((t) => t.addEventListener("click", () => {
     state.tab = t.dataset.tab;
+    // Keep the address bar and the navigation highlight in step with the tab
+    const q = state.tab === "profile" ? "?tab=profile" : state.tab === "thought" ? "?tab=thoughts" : "";
+    history.replaceState(null, "", `dashboard.html${q}`);
+    renderHeader();
     renderList();
   }));
 
@@ -770,8 +952,8 @@ async function initDashboard() {
 }
 
 /* ---------- Page: Create Blog ---------- */
-function initCreate() {
-  if (!requireLogin()) return;
+async function initCreate() {
+  if (!(await requireAuth())) return;
   const user = getSession();
   const editId = new URLSearchParams(window.location.search).get("edit");
 
@@ -1073,4 +1255,11 @@ document.addEventListener("DOMContentLoaded", () => {
     dashboard: initDashboard, create: initCreate, post: initPost,
   };
   if (pages[page]) pages[page]();
+});
+
+window.addEventListener("pageshow", (e) => {
+  const page = document.body.dataset.page;
+  if (e.persisted && ["dashboard", "create"].includes(page) && !getSession()) {
+    window.location.reload();
+  }
 });
