@@ -152,7 +152,7 @@ function tokenExpired(token) {
 // Only these pages can be returned to after login (prevents open redirects)
 function safeNext() {
   const next = new URLSearchParams(window.location.search).get("next") || "";
-  return /^(dashboard|create-blog|post|index)\.html(\?[\w%=&.-]*)?$/.test(next) ? next : "dashboard.html";
+  return /^(dashboard|create-blog|post|index|profile)\.html(\?[\w%=&.-]*)?$/.test(next) ? next : "dashboard.html";
 }
 
 function redirectToLogin(message) {
@@ -313,7 +313,7 @@ function bindTheme() {
 }
 
 /* ---------- Header, footer, icons ---------- */
-const NAV_ACTIVE = { home: "home", post: "home", dashboard: "dashboard", create: "create" };
+const NAV_ACTIVE = { home: "home", post: "home", dashboard: "dashboard", create: "create", profile: "profile" };
 const AUTH_PAGES = ["login", "register"];
 
 const brandHTML = () =>
@@ -334,8 +334,7 @@ function renderHeader() {
     header.innerHTML = `<div class="auth-tools">${themeIconBtn()}</div>`;
   } else if (user) {
     document.documentElement.classList.add("authed");
-    const onProfile = page === "dashboard" && new URLSearchParams(window.location.search).get("tab") === "profile";
-    const active = onProfile ? "profile" : NAV_ACTIVE[page];
+    const active = NAV_ACTIVE[page];
     const link = (key, href, ic, label) =>
       `<a class="nav-link" href="${href}"${active === key ? ' aria-current="page"' : ""}>${icon(ic, 20)}<span>${label}</span></a>`;
 
@@ -350,12 +349,12 @@ function renderHeader() {
         ${link("home", "index.html", "home", "Home")}
         ${link("dashboard", "dashboard.html", "dashboard", "Dashboard")}
         ${link("create", "create-blog.html", "pen", "Create Blog")}
-        ${link("profile", "dashboard.html?tab=profile", "user", "Profile")}
+        ${link("profile", "profile.html", "user", "Profile")}
         <span class="nav-spacer"></span>
-        <div class="nav-user">
+        <a class="nav-user" href="profile.html" aria-label="Your profile">
           ${avatar(user.name, 36)}
           <div><strong>${esc(user.name)}</strong><small>${esc(user.email)}</small></div>
-        </div>
+        </a>
         ${themeNavBtn()}
         <button type="button" class="nav-link" id="logoutBtn">${icon("logout", 20)}<span>Log out</span></button>
       </nav>`;
@@ -682,19 +681,19 @@ function initLogin() {
 
 /* ---------- Page: Dashboard ---------- */
 async function initDashboard() {
+  const tabParam = new URLSearchParams(window.location.search).get("tab");
+  if (tabParam === "profile") { window.location.replace("profile.html"); return; }
+
   if (!(await requireAuth())) return;
   const user = getSession();
   const first = String(user.name).trim().split(/\s+/)[0];
-  const welcome = document.getElementById("welcome");
-  welcome.textContent = `Welcome back, ${first}.`;
+  document.getElementById("welcome").textContent = `Welcome back, ${first}.`;
 
   const list = document.getElementById("myPosts");
-  const panel = document.getElementById("profilePanel");
   const tabs = document.querySelectorAll(".tab");
-  const tabParam = new URLSearchParams(window.location.search).get("tab");
   const state = {
     mine: [],
-    tab: tabParam === "thoughts" ? "thought" : tabParam === "profile" ? "profile" : "article",
+    tab: tabParam === "thoughts" ? "thought" : "article",
   };
 
   const actions = (p, label) => `
@@ -730,12 +729,115 @@ async function initDashboard() {
       ${actions(p, excerpt(p.content, 60))}
     </article>`;
 
-  /* ----- Profile tab ----- */
-  function renderProfile() {
+  function renderList() {
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === state.tab;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-pressed", String(on));
+    });
+
+    const wantThoughts = state.tab === "thought";
+    const items = state.mine.filter((p) => isThought(p) === wantThoughts);
+
+    if (items.length) {
+      list.innerHTML = items.map(wantThoughts ? thoughtRow : articleRow).join("");
+    } else if (wantThoughts) {
+      list.innerHTML = stateHTML({
+        icon: "message",
+        title: "No thoughts yet",
+        text: "Share a quick idea, opinion or observation.",
+        action: `<a class="btn btn-primary" href="create-blog.html?type=thought">Share a thought</a>`,
+      });
+    } else {
+      list.innerHTML = stateHTML({
+        icon: "pen",
+        title: "Nothing published yet",
+        text: "Your first article is one idea away.",
+        action: `<a class="btn btn-primary" href="create-blog.html">Write your first article</a>`,
+      });
+    }
+  }
+
+  async function load() {
+    list.innerHTML = skeletonRows(3);
+    try {
+      // /posts/mine returns only the posts whose author is the user in the verified token
+      const [mine, all] = await Promise.all([
+        api("/posts/mine", { auth: true }),
+        api("/posts"),
+      ]);
+      state.mine = mine;
+
+      const articles = mine.filter(isArticle);
+      const thoughts = mine.filter(isThought);
+      document.getElementById("statPosts").textContent = articles.length;
+      document.getElementById("statThoughts").textContent = thoughts.length;
+      document.getElementById("statWords").textContent =
+        mine.reduce((n, p) => n + wordCount(p.content), 0).toLocaleString("en-GB");
+      document.getElementById("statAll").textContent = all.length;
+      document.getElementById("tabArticlesCount").textContent = articles.length;
+      document.getElementById("tabThoughtsCount").textContent = thoughts.length;
+
+      renderList();
+    } catch (err) {
+      list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your posts", text: err.message, action: retryBtn });
+      list.querySelector("[data-retry]").addEventListener("click", load);
+    }
+  }
+
+  tabs.forEach((t) => t.addEventListener("click", () => {
+    state.tab = t.dataset.tab;
+    history.replaceState(null, "", state.tab === "thought" ? "dashboard.html?tab=thoughts" : "dashboard.html");
+    renderList();
+  }));
+
+  list.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-id]");
+    if (!btn) return;
+    const thought = btn.dataset.kind === "thought";
+    const ok = await confirmDialog({
+      title: thought ? "Delete this thought?" : "Delete this article?",
+      text: `“${btn.dataset.title}” will be permanently removed. This can't be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/posts/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE", auth: true });
+      toast(thought ? "Thought deleted." : "Article deleted.");
+      load();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+
+  load();
+}
+
+
+/* ---------- Page: Profile ---------- */
+async function initProfile() {
+  if (!(await requireAuth())) return;
+
+  const panel = document.getElementById("profilePanel");
+  let counts = null; // filled in once /posts/mine loads
+
+  const metaText = () => {
     const me = getSession();
-    const articles = state.mine.filter(isArticle).length;
-    const thoughts = state.mine.filter(isThought).length;
-    const since = new Date(me.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+    const joined = new Date(me.createdAt);
+    const parts = [];
+    if (!isNaN(joined)) {
+      parts.push(`Member since ${joined.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`);
+    }
+    if (counts) {
+      parts.push(`${counts.articles} ${counts.articles === 1 ? "article" : "articles"}`);
+      parts.push(`${counts.thoughts} ${counts.thoughts === 1 ? "thought" : "thoughts"}`);
+    }
+    return parts.join(" · ");
+  };
+
+  function render() {
+    const me = getSession();
 
     panel.innerHTML = `
       <div class="profile-card profile-head">
@@ -743,7 +845,7 @@ async function initDashboard() {
         <div>
           <h2>${esc(me.name)}</h2>
           <p class="muted">${esc(me.email)}</p>
-          <p class="muted">${isNaN(new Date(me.createdAt)) ? "" : `Member since ${esc(since)} · `}${articles} ${articles === 1 ? "article" : "articles"} · ${thoughts} ${thoughts === 1 ? "thought" : "thoughts"}</p>
+          <p class="muted" id="profileMeta">${esc(metaText())}</p>
         </div>
       </div>
 
@@ -801,9 +903,8 @@ async function initDashboard() {
       try {
         const data = await api("/auth/me", { method: "PATCH", auth: true, body: { name } });
         setSession({ ...getSession(), ...data.user });
-        welcome.textContent = `Welcome back, ${data.user.name.trim().split(/\s+/)[0]}.`;
         renderHeader();   // refresh the sidebar name
-        renderProfile();
+        render();
         toast("Name updated.");
       } catch (err) {
         showMsg(err.message, "error", "nameMsg");
@@ -853,102 +954,16 @@ async function initDashboard() {
     });
   }
 
-  /* ----- Tabs and lists ----- */
-  function applyTab() {
-    tabs.forEach((t) => {
-      const on = t.dataset.tab === state.tab;
-      t.classList.toggle("is-active", on);
-      t.setAttribute("aria-pressed", String(on));
-    });
-    list.hidden = state.tab === "profile";
-    panel.hidden = state.tab !== "profile";
-  }
+  render();
 
-  function renderList() {
-    applyTab();
-    if (state.tab === "profile") { renderProfile(); return; }
-
-    const wantThoughts = state.tab === "thought";
-    const items = state.mine.filter((p) => isThought(p) === wantThoughts);
-
-    if (items.length) {
-      list.innerHTML = items.map(wantThoughts ? thoughtRow : articleRow).join("");
-    } else if (wantThoughts) {
-      list.innerHTML = stateHTML({
-        icon: "message",
-        title: "No thoughts yet",
-        text: "Share a quick idea, opinion or observation.",
-        action: `<a class="btn btn-primary" href="create-blog.html?type=thought">Share a thought</a>`,
-      });
-    } else {
-      list.innerHTML = stateHTML({
-        icon: "pen",
-        title: "Nothing published yet",
-        text: "Your first article is one idea away.",
-        action: `<a class="btn btn-primary" href="create-blog.html">Write your first article</a>`,
-      });
-    }
-  }
-
-  async function load() {
-    list.innerHTML = skeletonRows(3);
-    try {
-      // /posts/mine returns only the posts whose author is the user in the verified token
-      const [mine, all] = await Promise.all([
-        api("/posts/mine", { auth: true }),
-        api("/posts"),
-      ]);
-      state.mine = mine;
-
-      const articles = mine.filter(isArticle);
-      const thoughts = mine.filter(isThought);
-      document.getElementById("statPosts").textContent = articles.length;
-      document.getElementById("statThoughts").textContent = thoughts.length;
-      document.getElementById("statWords").textContent =
-        mine.reduce((n, p) => n + wordCount(p.content), 0).toLocaleString("en-GB");
-      document.getElementById("statAll").textContent = all.length;
-      document.getElementById("tabArticlesCount").textContent = articles.length;
-      document.getElementById("tabThoughtsCount").textContent = thoughts.length;
-
-      renderList();
-    } catch (err) {
-      list.innerHTML = stateHTML({ icon: "alert", title: "Couldn't load your posts", text: err.message, action: retryBtn });
-      list.querySelector("[data-retry]").addEventListener("click", load);
-      applyTab();
-      if (state.tab === "profile") renderProfile();
-    }
-  }
-
-  tabs.forEach((t) => t.addEventListener("click", () => {
-    state.tab = t.dataset.tab;
-    // Keep the address bar and the navigation highlight in step with the tab
-    const q = state.tab === "profile" ? "?tab=profile" : state.tab === "thought" ? "?tab=thoughts" : "";
-    history.replaceState(null, "", `dashboard.html${q}`);
-    renderHeader();
-    renderList();
-  }));
-
-  list.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-id]");
-    if (!btn) return;
-    const thought = btn.dataset.kind === "thought";
-    const ok = await confirmDialog({
-      title: thought ? "Delete this thought?" : "Delete this article?",
-      text: `“${btn.dataset.title}” will be permanently removed. This can't be undone.`,
-      confirmLabel: "Delete",
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api(`/posts/${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE", auth: true });
-      toast(thought ? "Thought deleted." : "Article deleted.");
-      load();
-    } catch (err) {
-      toast(err.message, "error");
-    }
-  });
-
-  load();
+  // Article and thought counts arrive a moment later and only update the one line,
+  // so anything you've started typing in the forms isn't wiped
+  try {
+    const mine = await api("/posts/mine", { auth: true });
+    counts = { articles: mine.filter(isArticle).length, thoughts: mine.filter(isThought).length };
+    const meta = panel.querySelector("#profileMeta");
+    if (meta) meta.textContent = metaText();
+  } catch { /* counts are optional */ }
 }
 
 /* ---------- Page: Create Blog ---------- */
@@ -1253,13 +1268,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const pages = {
     home: initHome, register: initRegister, login: initLogin,
     dashboard: initDashboard, create: initCreate, post: initPost,
+    profile: initProfile,
   };
   if (pages[page]) pages[page]();
 });
 
 window.addEventListener("pageshow", (e) => {
   const page = document.body.dataset.page;
-  if (e.persisted && ["dashboard", "create"].includes(page) && !getSession()) {
+  if (e.persisted && ["dashboard", "create", "profile"].includes(page) && !getSession()) {
     window.location.reload();
   }
 });

@@ -668,3 +668,6 @@ dialog.modal::backdrop { background: rgba(10, 12, 11, .55); }
 .profile-head h2 { font-size: 1.9rem; overflow-wrap: anywhere; }
 .profile-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
 .profile-session { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+/* Sidebar user block is now a link to the profile page */
+.nav-user { color: inherit; text-decoration: none; }
