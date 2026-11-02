@@ -3,8 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 
-if (!process.env.JWT_SECRET) {
-  console.error("Missing JWT_SECRET in .env");
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error("JWT_SECRET is missing or too short. Use at least 32 random characters in .env");
   process.exit(1);
 }
 
@@ -19,8 +19,18 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10kb" }));
 
-// Slow down password-guessing: 50 auth requests per 15 minutes per IP
-app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 }));
+// Slow down password guessing: 50 attempts per 15 minutes per IP,
+// only on the endpoints that actually check a password
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again in a few minutes." },
+});
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register", authLimiter);
+app.use("/api/auth/password", authLimiter);
 
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/posts", require("./routes/posts"));
