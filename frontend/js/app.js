@@ -137,8 +137,7 @@ function showMsg(text, type = "error", id = "formMsg") {
   box.hidden = false;
 }
 
-// Decode the token's expiry (no verification: the server is the real authority,
-// this only saves a pointless request)
+
 function tokenExpired(token) {
   try {
     const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -149,7 +148,7 @@ function tokenExpired(token) {
   }
 }
 
-// Only these pages can be returned to after login (prevents open redirects)
+
 function safeNext() {
   const next = new URLSearchParams(window.location.search).get("next") || "";
   return /^(dashboard|create-blog|post|index|profile)\.html(\?[\w%=&.-]*)?$/.test(next) ? next : "dashboard.html";
