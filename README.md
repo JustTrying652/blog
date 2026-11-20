@@ -4,8 +4,8 @@
 
 Inkwell is a full-stack publishing platform where people write long-form **articles** and share short **thoughts** (up to 280 characters). It pairs an editorial reading experience with a lightweight social feel, and it was built from scratch with vanilla JavaScript, Node.js and PostgreSQL.
 
-**Live demo:** [https://your-site.netlify.app](https://your-site.netlify.app)
-**API health check:** [https://your-service.onrender.com/api/health](https://your-service.onrender.com/api/health)
+**Live demo:** [https://inkwells-blog.netlify.app](https://your-site.netlify.app)
+**API health check:** [https://inkwell-tjgm.onrender.com/api/health](https://your-service.onrender.com/api/health)
 
 > The API runs on a free hosting tier and sleeps when idle, so the first request after a quiet period can take up to a minute.
 
