@@ -1,5 +1,8 @@
-/* ---------- Config ---------- */
-const API = "http://localhost:5000/api";
+
+const PROD_API = "https://YOUR-SERVICE.onrender.com/api";
+const API = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ? "http://localhost:5000/api"
+  : PROD_API;
 const SESSION_KEY = "blog_session";
 const THEME_KEY = "inkwell_theme";
 const FLASH_KEY = "inkwell_flash";
@@ -101,7 +104,8 @@ function fmtDateTime(iso) {
 /* ---------- API ---------- */
 // One function for every API call
 async function api(path, { method = "GET", body, auth = false } = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
   const session = getSession();
   if (auth && session) headers.Authorization = `Bearer ${session.token}`;
 
@@ -113,7 +117,7 @@ async function api(path, { method = "GET", body, auth = false } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error("Cannot reach the server. Is the backend running?");
+    throw new Error("Cannot reach the server. Give it a minute to wake up.");
   }
 
   let data = {};
@@ -1257,6 +1261,13 @@ async function initPost() {
 
 /* ---------- Boot ---------- */
 document.addEventListener("DOMContentLoaded", () => {
+  if (!document.querySelector('link[rel="icon"]')) {
+    const fav = document.createElement("link");
+    fav.rel = "icon";
+    fav.type = "image/svg+xml";
+    fav.href = "favicon.svg";
+    document.head.appendChild(fav);
+  }
   renderHeader();
   renderFooter();
   hydrateIcons();

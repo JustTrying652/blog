@@ -11,3 +11,4 @@ node_modules/
 
 # Data files
 data.json
+.DS_Store

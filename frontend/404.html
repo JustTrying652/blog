@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="/" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page not found | Inkwell</title>
+  <script>try{var d=document.documentElement,t=localStorage.getItem("inkwell_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");d.dataset.theme=t;if(localStorage.getItem("blog_session"))d.classList.add("authed")}catch(e){}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Serif+Display:ital@0;1&family=Lora:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-page="notfound">
+  <header id="site-header"></header>
+
+  <main>
+    <div class="container page">
+      <div class="state">
+        <div class="state-icon" data-icon="alert" data-size="26"></div>
+        <h1>This page doesn't exist</h1>
+        <p class="muted">The link may be broken, or the page may have moved.</p>
+        <a class="btn btn-primary" href="index.html">Back to home</a>
+      </div>
+    </div>
+  </main>
+
+  <footer id="site-footer" class="footer"></footer>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
