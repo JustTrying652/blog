@@ -161,8 +161,9 @@ function safeNext() {
 function redirectToLogin(message) {
   clearSession();
   if (message) flash(message, "error");
-  const here = window.location.pathname.split("/").pop() + window.location.search;
-  window.location.href = `login.html?next=${encodeURIComponent(here)}`;
+  let page = window.location.pathname.split("/").pop() || "index";
+  if (!page.endsWith(".html")) page += ".html"; // Netlify serves /dashboard for dashboard.html
+  window.location.href = `login.html?next=${encodeURIComponent(page + window.location.search)}`;
 }
 
 function logout(message = "You've been logged out.") {
