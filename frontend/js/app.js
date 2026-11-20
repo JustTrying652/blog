@@ -1,5 +1,5 @@
 
-const PROD_API = "https://YOUR-SERVICE.onrender.com/api";
+const PROD_API = "https://inkwell-tjgm.onrender.com/api";
 const API = ["localhost", "127.0.0.1"].includes(window.location.hostname)
   ? "http://localhost:5000/api"
   : PROD_API;
